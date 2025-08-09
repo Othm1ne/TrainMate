@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'features/onboarding/ui/onboarding_screen.dart';
+import 'shell/main_shell.dart';
 
 class TrainMateApp extends StatelessWidget {
   const TrainMateApp({super.key});
@@ -13,7 +13,7 @@ class TrainMateApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.white),
         useMaterial3: true,
       ),
-      home: const OnboardingScreen(),
+      home: const MainShell(),
     );
   }
 }
