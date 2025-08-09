@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../features/home/ui/home_screen.dart';
 import 'package:convex_bottom_bar/convex_bottom_bar.dart';
+import '../features/profile/ui/profile_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -18,7 +19,7 @@ class _MainShellState extends State<MainShell> {
       const _Stub(title: 'Chat'),
       const _Stub(title: 'Events'),
       HomeScreen(onOpenPremium: () => setState(() => _tab = 4)),
-      const _Stub(title: 'Profile'),
+      const ProfileScreen(),
       const _Stub(title: 'Premium'),
     ];
 
