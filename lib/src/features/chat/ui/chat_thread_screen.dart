@@ -335,7 +335,12 @@ class _ViewProfileStub extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text(name)),
       body: Center(
-        child: CircleAvatar(radius: 60, backgroundImage: NetworkImage(avatar)),
+        child: CircleAvatar(
+          radius: 60,
+          backgroundColor: Colors.grey.shade300,
+          backgroundImage: NetworkImage(avatar),
+          onBackgroundImageError: (_, __) {},
+        ),
       ),
     );
   }

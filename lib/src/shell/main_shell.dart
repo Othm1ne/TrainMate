@@ -3,6 +3,7 @@ import '../features/home/ui/home_screen.dart';
 import 'package:convex_bottom_bar/convex_bottom_bar.dart';
 import '../features/profile/ui/profile_screen.dart';
 import '../features/chat/ui/chat_list_screen.dart';
+import '../features/events/ui/events_list_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -18,7 +19,7 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final pages = <Widget>[
       const ChatListScreen(),
-      const _Stub(title: 'Events'),
+      const EventsListScreen(),
       HomeScreen(onOpenPremium: () => setState(() => _tab = 4)),
       const ProfileScreen(),
       const _Stub(title: 'Premium'),

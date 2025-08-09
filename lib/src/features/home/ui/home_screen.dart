@@ -163,7 +163,6 @@ class _ProfileCard extends StatelessWidget {
   final SwipeDirection? direction;   // left/right/none
   const _ProfileCard(
       this.p, {
-        super.key,
         required this.swipeProgress,
         required this.direction,
       });
@@ -183,7 +182,9 @@ class _ProfileCard extends StatelessWidget {
     final isRight = direction == SwipeDirection.right;
     final isLeft  = direction == SwipeDirection.left;
     final sign = isRight ? -1.0 : (isLeft ? 1.0 : 0.0);
-    final dx = sign * (25.0 * swipeProgress.clamp(0, 1));
+    final raw = swipeProgress;
+    final safeProgress = raw.isFinite ? raw.clamp(0.0, 1.0).toDouble() : 0.0;
+    final dx = sign * (25.0 * safeProgress);
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -194,7 +195,11 @@ class _ProfileCard extends StatelessWidget {
         children: [
           Transform.translate(
             offset: Offset(dx, 0),
-            child: Image.network(p.imageUrl, fit: BoxFit.cover),
+            child: Image.network(
+              p.imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade300),
+            ),
           ),
           // dark gradient for readability
           Container(

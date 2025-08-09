@@ -106,7 +106,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
               itemBuilder: (context, i) {
                 final t = filtered[i];
                 return ListTile(
-                  leading: CircleAvatar(backgroundImage: NetworkImage(t.avatar)),
+                  leading: CircleAvatar(
+                    backgroundImage: NetworkImage(t.avatar),
+                    onBackgroundImageError: (_, __) {},
+                    backgroundColor: Colors.grey.shade300,
+                  ),
                   title: Text(t.name,
                       style: const TextStyle(fontWeight: FontWeight.w600)),
                   subtitle: Text(
