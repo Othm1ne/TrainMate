@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "859044919583",
+    "project_id": "trainmate-dev",
+    "storage_bucket": "trainmate-dev.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:859044919583:android:4509fb7062134191db982a",
+        "android_client_info": {
+          "package_name": "com.trainmate.trainmate"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "859044919583-rv4fcdqs1vi4dieoifhdlvgp5988d21u.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.trainmate.trainmate",
+            "certificate_hash": "1d192feca9102b8271e1ce8dee333a7659648a34"
+          }
+        },
+        {
+          "client_id": "859044919583-j5jjoo17gp0titm1a4b7am80hb9gl7bm.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDqHG1XU94gKDO1WyWyeZN52naHYCYCmOE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "859044919583-j5jjoo17gp0titm1a4b7am80hb9gl7bm.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
