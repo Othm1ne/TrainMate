@@ -26,8 +26,34 @@ module.exports = {
     "import",
   ],
   rules: {
-    "quotes": ["error", "double"],
-    "import/no-unresolved": 0,
+    // Let us use single or double quotes
+    "quotes": "off",
+
+    // Windows line endings are fine
+    "linebreak-style": "off",
+
+    // Keep long lines as warnings (140 chars)
+    "max-len": ["warn", { "code": 140, "ignoreUrls": true }],
+
+    // Turn off strict style nits that were throwing hundreds of errors
+    "object-curly-spacing": "off",
+    "one-var": "off",
+    "arrow-parens": "off",
+    "operator-linebreak": "off",
+    "brace-style": ["warn", "1tbs", { "allowSingleLine": true }],
+    "no-multi-spaces": "off",
+    "comma-dangle": "off",
+    "require-jsdoc": "off",
+
+    // TS-specific relaxations
+    "@typescript-eslint/no-unused-vars": ["warn"],
+    "@typescript-eslint/no-non-null-assertion": "off",
+
+    // Keep your indent rule if you like
     "indent": ["error", 2],
+
+    // Keep import resolver disabled as you already had
+    "import/no-unresolved": 0
+
   },
 };

@@ -14,10 +14,16 @@ void main() async {
 
   try {
     debugPrint('==> Firebase init start');
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    debugPrint('==> Firebase init OK');
+    
+    // Check if Firebase is already initialized
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      debugPrint('==> Firebase init OK');
+    } else {
+      debugPrint('==> Firebase already initialized');
+    }
 
     // Use debug providers until you add your debug token in the console.
     await FirebaseAppCheck.instance.activate(
