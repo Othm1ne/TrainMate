@@ -1,162 +1,163 @@
+// lib/src/features/auth/ui/login_screen.dart
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:go_router/go_router.dart';
 
-class LoginScreen extends StatelessWidget {
+class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  bool _loading = false;
+
+  Future<void> _ensureFirestoreProfile(User user) async {
+    final doc = FirebaseFirestore.instance.collection('users').doc(user.uid);
+    final exists = (await doc.get()).exists;
+    if (exists) return;
+
+    final now = DateTime.now();
+    await doc.set({
+      'name': user.displayName ?? 'New User',
+      'location': 'Unknown',
+      'joinedYear': now.year,
+      'level': '',
+      'bio': '',
+      'sports': [],
+      'badges': [],
+      'photoPath': user.photoURL ?? '',
+      'createdAt': now.toIso8601String(),
+    });
+  }
+
+  Future<void> _loginWithEmail() async {
+    if (_emailCtrl.text.isEmpty || _passwordCtrl.text.isEmpty) return;
+    setState(() => _loading = true);
+
+    try {
+      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _emailCtrl.text.trim(),
+        password: _passwordCtrl.text.trim(),
+      );
+
+      await _ensureFirestoreProfile(cred.user!);
+
+      if (context.mounted) context.go('/main');
+    } on FirebaseAuthException catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message ?? 'Login failed')),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loginWithGoogle() async {
+    setState(() => _loading = true);
+
+    try {
+      // 1️⃣ Start Google sign-in flow
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) {
+        setState(() => _loading = false);
+        return; // cancelled by user
+      }
+
+      // 2️⃣ Retrieve authentication tokens
+      final googleAuth = await googleUser.authentication;
+
+      // 3️⃣ Build Firebase credential
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      // 4️⃣ Sign in with Firebase
+      final userCred =
+      await FirebaseAuth.instance.signInWithCredential(credential);
+      await _ensureFirestoreProfile(userCred.user!);
+
+      if (context.mounted) context.go('/main');
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Google sign-in failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Log In'),
-        centerTitle: true,
-        leading: const BackButton(color: Colors.black),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text('Login')),
       body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 100),
-            // Logo
-            Center(
-              child:
-                Image.asset('assets/images/logo_icon.png', height: 220),
-            ),
-            const SizedBox(height: 48),
-
-            // Username Field
-            _InputField(
-              hint: "UserName",
-              obscure: false,
-              icon: Icons.person_outline,
+            TextField(
+              controller: _emailCtrl,
+              decoration: const InputDecoration(labelText: 'Email'),
             ),
             const SizedBox(height: 16),
-
-            // Password Field
-            _InputField(
-              hint: "Password",
-              obscure: true,
-              icon: Icons.lock_outline,
+            TextField(
+              controller: _passwordCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
             ),
             const SizedBox(height: 24),
 
-            // Log In Button
-            ElevatedButton(
-              onPressed: () {
-                // TODO: handle login
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.teal,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-              ),
-              child: const Text("Log In", style: TextStyle(fontSize: 16, color: Colors.white)),
+            // --- Email login ---
+            ElevatedButton.icon(
+              onPressed: _loading ? null : _loginWithEmail,
+              icon: _loading
+                  ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.login),
+              label: Text(_loading ? 'Logging in...' : 'Login'),
             ),
+
             const SizedBox(height: 12),
 
-            // Forgot password
-            Center(
-              child: TextButton(
-                onPressed: () {
-                  // TODO: forgot password
-                },
-                child: const Text(
-                  "I forgot my password.",
-                  style: TextStyle(
-                    decoration: TextDecoration.underline,
-                    fontSize: 13,
-                    color: Colors.black87,
-                  ),
-                ),
+            // --- Google login ---
+            OutlinedButton.icon(
+              onPressed: _loading ? null : _loginWithGoogle,
+              icon: Image.asset('assets/icons/google.png',height: 24, width: 24),
+              label: const Text(
+                'Continue with Google',
+                style: TextStyle(color: Colors.black87),
+              ),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.white,
+                side: BorderSide(color: cs.outlineVariant),
               ),
             ),
-            const Spacer(),
 
-            // Continue with Google
-            _SocialButton(
-              label: "Continue with Google",
-              iconPath: "assets/images/google.png",
-              onTap: () {
-                // TODO: Google login
-              },
-            ),
             const SizedBox(height: 12),
-
-            // Continue with Apple
-            _SocialButton(
-              label: "Continue with Apple",
-              iconPath: "assets/images/apple.png",
-              onTap: () {
-                // TODO: Apple login
-              },
+            TextButton(
+              onPressed: () => context.go('/signup'),
+              child: const Text("Don't have an account? Sign up"),
             ),
-            const SizedBox(height: 24),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _InputField extends StatelessWidget {
-  final String hint;
-  final bool obscure;
-  final IconData icon;
-
-  const _InputField({
-    required this.hint,
-    required this.obscure,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      obscureText: obscure,
-      decoration: InputDecoration(
-        filled: true,
-        fillColor: Colors.grey.shade200,
-        prefixIcon: Icon(icon),
-        hintText: hint,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-      ),
-    );
-  }
-}
-
-class _SocialButton extends StatelessWidget {
-  final String label;
-  final String iconPath;
-  final VoidCallback onTap;
-
-  const _SocialButton({
-    required this.label,
-    required this.iconPath,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      style: OutlinedButton.styleFrom(
-        minimumSize: const Size.fromHeight(48),
-        side: BorderSide(color: Colors.grey.shade300),
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-        ),
-      ),
-      onPressed: onTap,
-      icon: Image.asset(iconPath, height: 20),
-      label: Text(label, style: const TextStyle(color: Colors.black)),
     );
   }
 }

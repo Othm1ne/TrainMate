@@ -1,422 +1,170 @@
-import 'dart:io';
-import 'dart:math';
-import 'dart:convert';
-import 'package:crypto/crypto.dart';
+// lib/src/features/auth/ui/signup_screen.dart
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:multi_select_flutter/multi_select_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:go_router/go_router.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
+
   @override
   State<SignUpScreen> createState() => _SignUpScreenState();
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
-  final _formKey = GlobalKey<FormState>();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
   bool _loading = false;
 
-  // Controllers
-  final _nameCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
-  final _ageCtrl = TextEditingController();
+  Future<void> _createFirestoreProfile(User user, {String? displayName}) async {
+    final uid = user.uid;
+    final doc = FirebaseFirestore.instance.collection('users').doc(uid);
+    final now = DateTime.now();
 
-  // Pickers / selections
-  File? _profileImage;
-  final ImagePicker _picker = ImagePicker();
-  final _selectedLevel = ValueNotifier<String?>(null);
-  final _selectedSports = ValueNotifier<List<String>>([]);
+    final exists = (await doc.get()).exists;
+    if (exists) return; // prevent overwriting an existing profile
 
-  final _allSports = const [
-    "Running","Cycling","Swimming","Gym","CrossFit","Bodybuilding",
-    "Yoga","Pilates","Meditation","Boxing","MMA","Karate",
-    "Football","Basketball","Volleyball","Tennis","Badminton","Padel",
-    "Hiking","Climbing","Surfing","Dance","Calisthenics","Rowing"
-  ];
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _emailCtrl.dispose();
-    _passCtrl.dispose();
-    _ageCtrl.dispose();
-    _selectedLevel.dispose();
-    _selectedSports.dispose();
-    super.dispose();
+    await doc.set({
+      'name': displayName ?? user.displayName ?? 'New User',
+      'location': 'Unknown',
+      'joinedYear': now.year,
+      'level': '',
+      'bio': '',
+      'sports': [],
+      'badges': [],
+      'photoPath': user.photoURL ?? '',
+      'createdAt': now.toIso8601String(),
+    });
   }
 
-  void _snack(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
-  // ===== Email/Password flow =====
-  Future<void> _submitEmailPassword() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_selectedLevel.value == null) {
-      _snack('Please choose your level');
-      return;
-    }
-    if (_selectedSports.value.isEmpty) {
-      _snack('Please choose at least one sport');
-      return;
-    }
+  Future<void> _signUpWithEmail() async {
+    if (_emailCtrl.text.isEmpty || _passwordCtrl.text.isEmpty) return;
 
     setState(() => _loading = true);
     try {
+      // 1️⃣ Create Firebase Auth user
       final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _emailCtrl.text.trim(),
-        password: _passCtrl.text.trim(),
+        password: _passwordCtrl.text.trim(),
       );
-      await _postSignInProfile(cred.user, overrideName: _nameCtrl.text.trim());
-      _snack('Account created! Welcome 👋');
-      if (mounted) Navigator.of(context).pop();
+
+      // 2️⃣ Create Firestore profile
+      await _createFirestoreProfile(cred.user!, displayName: _nameCtrl.text.trim());
+
+      // 3️⃣ Update Auth display name
+      await cred.user?.updateDisplayName(_nameCtrl.text.trim());
+
+      if (context.mounted) context.go('/main');
     } on FirebaseAuthException catch (e) {
-      _snack(_friendlyAuthError(e));
-    } catch (_) {
-      _snack('Something went wrong. Please try again.');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message ?? 'Sign-up failed')),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  // ===== Google sign-in =====
   Future<void> _signInWithGoogle() async {
     setState(() => _loading = true);
     try {
-      final gUser = await GoogleSignIn().signIn();
-      if (gUser == null) { setState(() => _loading = false); return; }
-      final gAuth = await gUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: gAuth.accessToken,
-        idToken: gAuth.idToken,
-      );
-      final cred = await FirebaseAuth.instance.signInWithCredential(credential);
-      // If form has name, prefer it when provider didn't return a name
-      await _postSignInProfile(cred.user,
-          overrideName: _nameCtrl.text.trim().isNotEmpty ? _nameCtrl.text.trim() : null);
-      _snack('Signed in with Google');
-      if (mounted) Navigator.of(context).pop();
-    } on FirebaseAuthException catch (e) {
-      _snack(_friendlyAuthError(e));
-    } catch (_) {
-      _snack('Google sign-in failed.');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  // ===== Apple sign-in (iOS only) =====
-  Future<void> _signInWithApple() async {
-    if (!Platform.isIOS) { _snack('Apple Sign In is iOS only.'); return; }
-    setState(() => _loading = true);
-    try {
-      final rawNonce = _generateNonce();
-      final nonce = _sha256ofString(rawNonce);
-      final appleCred = await SignInWithApple.getAppleIDCredential(
-        scopes: [AppleIDAuthorizationScopes.email, AppleIDAuthorizationScopes.fullName],
-        nonce: nonce,
-      );
-      final oauthCred = OAuthProvider('apple.com').credential(
-        idToken: appleCred.identityToken,
-        rawNonce: rawNonce,
-      );
-      final cred = await FirebaseAuth.instance.signInWithCredential(oauthCred);
-
-      // Apple may only provide name on first auth; fallback to form name
-      String? name;
-      if ((appleCred.givenName ?? '').isNotEmpty || (appleCred.familyName ?? '').isNotEmpty) {
-        name = '${appleCred.givenName ?? ''} ${appleCred.familyName ?? ''}'.trim();
-      } else if (_nameCtrl.text.trim().isNotEmpty) {
-        name = _nameCtrl.text.trim();
+      // 1️⃣ Trigger Google sign-in flow
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) {
+        setState(() => _loading = false);
+        return; // cancelled by user
       }
 
-      await _postSignInProfile(cred.user, overrideName: name);
-      _snack('Signed in with Apple');
-      if (mounted) Navigator.of(context).pop();
-    } on FirebaseAuthException catch (e) {
-      _snack(_friendlyAuthError(e));
-    } catch (_) {
-      _snack('Apple sign-in failed.');
+      // 2️⃣ Obtain auth details from Google
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+      // 3️⃣ Create credential
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      // 4️⃣ Sign in to Firebase with the Google credentials
+      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
+      final user = userCred.user!;
+      await _createFirestoreProfile(user);
+
+      if (context.mounted) context.go('/main');
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Google sign-in failed: $e')),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  // ===== Common profile merge after any sign-in =====
-  Future<void> _postSignInProfile(User? user, {String? overrideName}) async {
-    if (user == null) return;
-
-    // Upload selected profile image if we have one (even for SSO)
-    String? photoURL = user.photoURL;
-    if (_profileImage != null) {
-      final ref = FirebaseStorage.instance.ref('users/${user.uid}/profile.jpg');
-      await ref.putFile(_profileImage!, SettableMetadata(contentType: 'image/jpeg'));
-      photoURL = await ref.getDownloadURL();
-      await user.updatePhotoURL(photoURL);
-    }
-
-    // Update name if we have a better one
-    if (overrideName != null && overrideName.isNotEmpty && user.displayName != overrideName) {
-      await user.updateDisplayName(overrideName);
-    }
-
-    // Merge extra fields into Firestore
-    final age = int.tryParse(_ageCtrl.text.trim());
-    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-      'displayName': overrideName ?? user.displayName,
-      'photoURL': photoURL,
-      'email': user.email,
-      'level': _selectedLevel.value ?? 'Beginner',
-      'sports': _selectedSports.value,
-      'age': age,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-  }
-
-  // ===== Helpers =====
-  String _friendlyAuthError(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'email-already-in-use': return 'This email is already in use.';
-      case 'invalid-email': return 'Please enter a valid email.';
-      case 'weak-password': return 'Password is too weak (min 6 chars).';
-      case 'operation-not-allowed': return 'Provider is disabled in Firebase.';
-      default: return e.message ?? 'Authentication error.';
-    }
-  }
-
-  String _generateNonce([int length = 32]) {
-    const charset = '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
-    final rand = Random.secure();
-    return List.generate(length, (_) => charset[rand.nextInt(charset.length)]).join();
-  }
-  String _sha256ofString(String input) {
-    final bytes = utf8.encode(input);
-    final digest = sha256.convert(bytes);
-    return digest.toString();
-  }
-
-  Future<void> _pickImage() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
-    if (picked != null) setState(() => _profileImage = File(picked.path));
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    _nameCtrl.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final deco = (String hint) => InputDecoration(
-      hintText: hint,
-      filled: true,
-      fillColor: Colors.grey.shade200,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide.none,
-      ),
-    );
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Create Account'),
-        centerTitle: true,
-        leading: const BackButton(color: Colors.black),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-      ),
-      body: Stack(
-        children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                children: [
-                  const SizedBox(height: 16),
-                  // Profile pic
-                  GestureDetector(
-                    onTap: _pickImage,
-                    child: Stack(
-                      alignment: Alignment.bottomRight,
-                      children: [
-                        CircleAvatar(
-                          radius: 48,
-                          backgroundColor: const Color(0xFFEDEDED),
-                          backgroundImage: _profileImage != null ? FileImage(_profileImage!) : null,
-                          child: _profileImage == null
-                              ? const Icon(Icons.person, size: 40, color: Colors.grey)
-                              : null,
-                        ),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.teal,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                          padding: const EdgeInsets.all(4),
-                          child: const Icon(Icons.add, size: 20, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text("Add a profile picture"),
-                  const SizedBox(height: 24),
+      appBar: AppBar(title: const Text('Create Account')),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(labelText: 'Name'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _emailCtrl,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _passwordCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
+            ),
+            const SizedBox(height: 24),
 
-                  // Email/Password inputs
-                  TextFormField(
-                    controller: _nameCtrl,
-                    validator: (v) => (v == null || v.trim().length < 2) ? 'Enter your name' : null,
-                    decoration: deco('Full Name'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _emailCtrl,
-                    keyboardType: TextInputType.emailAddress,
-                    validator: (v) => (v == null || !v.contains('@')) ? 'Enter a valid email' : null,
-                    decoration: deco('Email'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _passCtrl,
-                    obscureText: true,
-                    validator: (v) => (v == null || v.length < 6) ? 'Min 6 characters' : null,
-                    decoration: deco('Password'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _ageCtrl,
-                    keyboardType: TextInputType.number,
-                    validator: (v) {
-                      if (v == null || v.isEmpty) return null; // optional
-                      final n = int.tryParse(v);
-                      if (n == null || n < 13 || n > 100) return 'Enter a valid age (13–100)';
-                      return null;
-                    },
-                    decoration: deco('Age (optional)'),
-                  ),
-                  const SizedBox(height: 12),
+            // --- Email Sign Up Button ---
+            ElevatedButton.icon(
+              onPressed: _loading ? null : _signUpWithEmail,
+              icon: _loading
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.person_add),
+              label: Text(_loading ? 'Creating Account...' : 'Sign Up'),
+            ),
 
-                  // Level
-                  ValueListenableBuilder<String?>(
-                    valueListenable: _selectedLevel,
-                    builder: (_, value, __) {
-                      return DropdownButtonFormField<String>(
-                        value: value,
-                        items: const [
-                          DropdownMenuItem(value: "Beginner", child: Text("Beginner")),
-                          DropdownMenuItem(value: "Intermediate", child: Text("Intermediate")),
-                          DropdownMenuItem(value: "Expert", child: Text("Expert")),
-                        ],
-                        onChanged: (v) => _selectedLevel.value = v,
-                        decoration: deco('Level'),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
+            const SizedBox(height: 12),
 
-                  // Sports (multi-select)
-                  ValueListenableBuilder<List<String>>(
-                    valueListenable: _selectedSports,
-                    builder: (_, selected, __) {
-                      return MultiSelectDialogField(
-                        items: _allSports.map((s) => MultiSelectItem(s, s)).toList(),
-                        title: const Text("Preferred Sports"),
-                        buttonText: const Text("Preferred Sport(s)"),
-                        buttonIcon: const Icon(Icons.sports),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        listType: MultiSelectListType.CHIP,
-                        initialValue: selected,
-                        onConfirm: (values) { _selectedSports.value = values.cast<String>(); },
-                      );
-                    },
-                  ),
-
-                  const SizedBox(height: 20),
-                  // Email/Password submit
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _loading ? null : _submitEmailPassword,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                      ),
-                      child: const Text("Create Account", style: TextStyle(fontSize: 16)),
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-                  // Divider
-                  Row(
-                    children: const [
-                      Expanded(child: Divider()),
-                      Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('or')),
-                      Expanded(child: Divider()),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Social buttons
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _loading ? null : _signInWithGoogle,
-                      icon: const Icon(Icons.g_mobiledata, size: 24),
-                      label: const Text('Continue with Google'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (Platform.isIOS)
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _loading ? null : _signInWithApple,
-                        icon: const Icon(Icons.apple, size: 24),
-                        label: const Text('Continue with Apple'),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                        ),
-                      ),
-                    ),
-
-                  const SizedBox(height: 12),
-                  Text.rich(
-                    TextSpan(
-                      text: "By signing in, you agree to our ",
-                      children: [
-                        TextSpan(
-                          text: "Term of Service",
-                          style: const TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
-                        ),
-                        const TextSpan(text: "."),
-                      ],
-                    ),
-                    style: const TextStyle(fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                ],
+            // --- Google Sign In Button ---
+            OutlinedButton.icon(
+              onPressed: _loading ? null : _signInWithGoogle,
+              icon: Image.asset('assets/icons/google.png',height: 24, width: 24),
+              label: const Text('Sign in with Google', style: TextStyle(color: Colors.black87)),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.grey),
+                backgroundColor: Colors.white,
               ),
             ),
-          ),
 
-          if (_loading)
-            Container(color: Colors.black45, child: const Center(child: CircularProgressIndicator())),
-        ],
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () => context.go('/login'),
+              child: const Text('Already have an account? Log in'),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
-// you have to complete linking the front with the back especially with appstore connection

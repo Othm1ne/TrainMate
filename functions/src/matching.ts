@@ -1,109 +1,117 @@
-import * as geofire from "geofire-common";
-import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { onSchedule } from "firebase-functions/v2/scheduler";
-import { db, now, region } from "./bootstrap";
-import { computeScore, TMUser } from "./scoring";
+/* functions/src/matching.ts */
+import * as admin from 'firebase-admin';
+import {
+  onCall,
+  HttpsError,
+  CallableRequest,
+} from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 
-const USERS = "users";
+import { haversineDistanceKm } from './utils/haversine';
+import { scoreMatch } from './scoring';
 
-async function getUser(uid: string): Promise<TMUser | null> {
-  const snap = await db.doc(`${USERS}/${uid}`).get();
-  if (!snap.exists) return null;
-  const d = snap.data()!;
-  return {
-    uid,
-    sports: Array.isArray(d.sports) ? d.sports : [],
-    level: (d.level as TMUser["level"]) ?? "Beginner",
-    location: d.location,
-    lastActive: d.updatedAt ?? d.createdAt,
-  };
-}
+admin.initializeApp();
+const db = admin.firestore();
 
+const REGION = 'europe-west1';
+const MAX_DISTANCE_KM = 25;
+const LIMIT = 30;
+
+/**
+ * Callable: recompute recommendations for the signed-in user.
+ */
 export const refreshRecommendationsForUser = onCall(
-  { region },
-  async (req) => {
-    const uid = req.auth?.uid;
-    if (!uid) throw new HttpsError("unauthenticated", "Sign in");
-    await rebuildFor(uid);
-    return { ok: true };
+  { region: REGION },
+  async (request: CallableRequest<unknown>) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Login required');
+    }
+    const uid = request.auth.uid;
+
+    const meSnap = await db.doc(`users/${uid}`).get();
+    if (!meSnap.exists) {
+      throw new HttpsError('not-found', 'User doc missing');
+    }
+    const me = meSnap.data()!;
+    if (!me.location) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Location missing'
+      );
+    }
+
+    const myLat = me.location.lat;
+    const myLng = me.location.lng;
+    const mySports: string[] = me.sports ?? [];
+
+    /* ---------- fetch candidates ---------- */
+    const usersSnap = await db.collection('users').where('location', '!=', null).get();
+    const scored: {
+      otherUid: string;
+      profile: FirebaseFirestore.DocumentData;
+      score: number;
+      distanceKm: number;
+      overlap: number;
+    }[] = [];
+
+    usersSnap.forEach((d) => {
+      if (d.id === uid) return;
+      const p = d.data();
+      const dist = haversineDistanceKm(myLat, myLng, p.location.lat, p.location.lng);
+      if (dist > MAX_DISTANCE_KM) return;
+
+      const overlap = (p.sports ?? []).filter((s: string) => mySports.includes(s)).length;
+      if (overlap === 0) return;
+
+      scored.push({
+        otherUid: d.id,
+        profile: p,
+        distanceKm: dist,
+        overlap,
+        score: scoreMatch({
+          overlap,
+          distanceKm: dist,
+          levelDiff: Math.abs((me.level ?? 1) - (p.level ?? 1)),
+        }),
+      });
+    });
+
+    scored.sort((a, b) => b.score - a.score).splice(LIMIT);
+
+    /* ---------- write subcollection ---------- */
+    const itemsRef = db.collection('recommendations').doc(uid).collection('items');
+    // delete previous
+    (await itemsRef.listDocuments()).forEach((doc) => doc.delete());
+
+    const batch = db.batch();
+    scored.forEach((s) => {
+      batch.set(itemsRef.doc(s.otherUid), {
+        name: s.profile.name ?? null,
+        age: s.profile.age ?? null,
+        sports: s.profile.sports ?? [],
+        photoUrl: s.profile.photoUrl ?? null,
+        score: s.score,
+        distanceKm: s.distanceKm,
+        overlap: s.overlap,
+        ts: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    await batch.commit();
+
+    return { written: scored.length };
   }
 );
 
+/**
+ * Nightly refresh for all users (02:00 UTC).
+ * You can keep or delete this cron job.
+ */
 export const nightlyRecommendations = onSchedule(
-  { region, schedule: "every 24 hours", timeZone: "Africa/Casablanca" },
+  { region: REGION, schedule: '0 2 * * *' },
   async () => {
-    const batchSize = 200;
-    const q = db.collection(USERS).orderBy("updatedAt", "desc").limit(batchSize);
-    const snaps = await q.get();
-    await Promise.all(snaps.docs.map((d) => rebuildFor(d.id)));
-  }
-);
-
-async function rebuildFor(uid: string): Promise<void> {
-  const me = await getUser(uid);
-  if (!me || !me.location) return;
-
-  const radiusInM = 25_000;
-  const center: [number, number] = [
-    me.location.latitude,
-    me.location.longitude,
-  ];
-  const bounds = geofire.geohashQueryBounds(center, radiusInM);
-
-  const seen = new Set<string>();
-  const candidates: FirebaseFirestore.DocumentData[] = [];
-
-  for (const b of bounds) {
-    const snap = await db
-      .collection(USERS)
-      .orderBy("geohash")
-      .startAt(b[0])
-      .endAt(b[1])
-      .limit(200)
-      .get();
-
-    for (const doc of snap.docs) {
-      if (doc.id === uid) continue;
-      if (!seen.has(doc.id)) {
-        candidates.push({ id: doc.id, ...doc.data() });
-        seen.add(doc.id);
-      }
+    const users = await db.collection('users').listDocuments();
+    for (const u of users) {
+      await refreshRecommendationsForUser.run({ context: { auth: { uid: u.id } } } as any);
     }
   }
-
-  const mine = new Set<string>(me.sports || []);
-  const filtered = candidates.filter((c) => {
-    const sports: string[] = Array.isArray(c.sports) ? c.sports : [];
-    return sports.some((s) => mine.has(s));
-  });
-
-  const others: TMUser[] = filtered.map((c) => ({
-    uid: c.id as string,
-    sports: Array.isArray(c.sports) ? c.sports : [],
-    level: (c.level as TMUser["level"]) ?? "Beginner",
-    location: c.location,
-    lastActive: c.updatedAt ?? c.createdAt,
-  }));
-
-  const scored = others
-    .map((o) => ({ o, m: computeScore(me, o, 25) }))
-    .sort((a, b) => b.m.score - a.m.score)
-    .slice(0, 20);
-
-  const col = db.collection(USERS).doc(uid).collection("recommendations");
-  const batch = db.batch();
-  const old = await col.get();
-  old.forEach((d) => batch.delete(d.ref));
-
-  for (const { o, m } of scored) {
-    batch.set(col.doc(o.uid), {
-      targetUid: o.uid,
-      score: Math.round(m.score * 1000) / 1000,
-      distanceKm: Math.round(m.distanceKm * 10) / 10,
-      overlap: Math.round(m.overlap * 100) / 100,
-      reason: `Shared sports & ${m.distanceKm.toFixed(1)} km away`,
-      createdAt: now(),
-    });
-  }
-  await batch.commit();
-}
+);

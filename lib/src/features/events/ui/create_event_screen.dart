@@ -2,8 +2,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'events_list_screen.dart';
+import '../model/event_item.dart';
 import '../../../shared/sports.dart';
+
 
 class CreateEventScreen extends StatefulWidget {
   const CreateEventScreen({super.key});

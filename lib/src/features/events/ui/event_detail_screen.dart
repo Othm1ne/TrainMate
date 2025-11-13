@@ -1,6 +1,8 @@
 // lib/src/features/events/ui/event_detail_screen.dart
 import 'package:flutter/material.dart';
-import 'events_list_screen.dart';
+import '../model/event_item.dart';
+
+
 
 class EventDetailScreen extends StatefulWidget {
   final EventItem event;

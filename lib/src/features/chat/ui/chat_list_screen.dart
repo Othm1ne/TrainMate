@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../model/chat_thread.dart';
 import 'chat_thread_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
@@ -148,20 +149,5 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (d.inMinutes < 60) return '${d.inMinutes}m';
     if (d.inHours < 24) return '${d.inHours}h';
     return '${d.inDays}d';
-    // you can swap to a package like "timeago" later if you want locales
   }
-}
-
-class ChatThread {
-  final String name;
-  final String avatar;
-  final String lastMessage;
-  final DateTime lastTime;
-
-  const ChatThread({
-    required this.name,
-    required this.avatar,
-    required this.lastMessage,
-    required this.lastTime,
-  });
 }

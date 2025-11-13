@@ -1,269 +1,368 @@
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:swipable_stack/swipable_stack.dart';
+import 'package:geolocator/geolocator.dart';
 
 class HomeScreen extends StatefulWidget {
-  final VoidCallback? onOpenPremium;
-  const HomeScreen({super.key, this.onOpenPremium});
+  const HomeScreen({super.key});
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _controller = SwipableStackController();
+  // CHANGE THIS TO true to bypass backend and see the UI with sample data.
+  static const bool useMockData = false;
 
-  final _profiles = const [
-    Profile(
-      name: 'Marco',
-      age: 28,
-      distanceKm: 3,
-      imageUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e',
-      level: 'Intermediate',
-      bio: 'Early-morning gym and weekend CrossFit. Open to doubles tennis too!',
-      sports: ['Gym', 'CrossFit'],
-    ),
-    Profile(
-      name: 'Lina',
-      age: 26,
-      distanceKm: 2,
-      imageUrl: 'https://images.unsplash.com/photo-1544006659-f0b21884ce1d',
-      level: 'Beginner',
-      bio: 'New to cycling, love easy park rides and yoga cooldowns.',
-      sports: ['Yoga', 'Cycling'],
-    ),
-    Profile(
-      name: 'Ethan',
-      age: 24,
-      distanceKm: 5,
-      imageUrl: 'https://images.unsplash.com/photo-1607746882042-944635dfe10e',
-      level: 'Expert',
-      bio: 'Former college tennis, now mostly runs 10Ks. Looking for track buddy.',
-      sports: ['Tennis', 'Running'],
-    ),
-  ];
+  bool _loading = true;
+  String? _error;
+  String _stage = 'init';
+  List<Recommendation> _items = [];
+
+  late final FirebaseFunctions _functions =
+  FirebaseFunctions.instanceFor(region: 'europe-west1');
+
+  void _setStage(String s) {
+    _stage = s;
+    // Prints to console – please paste these back to me if it fails.
+    // Example: STAGE: gps.requestPermission
+    // (Do not remove; this is how we’ll know where it stops.)
+    // ignore: avoid_print
+    print('STAGE: $s');
+    if (mounted) setState(() {});
+  }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Find a Partner'),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.star, color: Colors.amber),
-            onPressed: widget.onOpenPremium ?? () {
-              // fallback if not provided
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const _PremiumStub()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Expanded(
-              child: SwipableStack(
-                controller: _controller,
-                detectableSwipeDirections: const {
-                  SwipeDirection.left,
-                  SwipeDirection.right,
-                },
-                onSwipeCompleted: (index, direction) {
-                  if (direction == SwipeDirection.right) {
-                    HapticFeedback.mediumImpact();   // like
-                  } else if (direction == SwipeDirection.left) {
-                    HapticFeedback.selectionClick(); // pass
-                  }
-                },
-                overlayBuilder: (_, __) => const SizedBox.shrink(),
-                builder: (_, props) {
-                  final i = props.index % _profiles.length;
-                  final p = _profiles[i];
-                  return _ProfileCard(
-                    p,
-                    swipeProgress: props.swipeProgress,
-                    direction: props.direction,
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _circleAction(
-                  icon: Icons.close,
-                  color: Colors.red,
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    _controller.next(swipeDirection: SwipeDirection.left);
-                  },
-                ),
-                _circleAction(
-                  icon: Icons.check,
-                  color: Colors.green,
-                  onTap: () {
-                    HapticFeedback.mediumImpact();
-                    _controller.next(swipeDirection: SwipeDirection.right);
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
+  void initState() {
+    super.initState();
+    _bootstrap();
   }
 
-  Widget _circleAction({
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return ElevatedButton(
-      onPressed: onTap,
-      style: ElevatedButton.styleFrom(
-        shape: const CircleBorder(),
-        padding: const EdgeInsets.all(16),
-        backgroundColor: Colors.white,
-        foregroundColor: color,
-        elevation: 2,
-      ),
-      child: Icon(icon, size: 28),
-    );
-  }
-}
+  Future<void> _bootstrap() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _stage = 'init';
+    });
 
-class Profile {
-  final String name;
-  final int age;
-  final int distanceKm;
-  final String imageUrl;
-  final String level;   // Beginner | Intermediate | Expert
-  final String bio;     // short description
-  final List<String> sports;
-  const Profile({
-    required this.name,
-    required this.age,
-    required this.distanceKm,
-    required this.imageUrl,
-    required this.level,
-    required this.bio,
-    required this.sports,
-  });
-}
+    try {
+      if (useMockData) {
+        _setStage('mock.fill');
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        _items = _mock();
+        _loading = false;
+        setState(() {});
+        return;
+      }
 
-class _ProfileCard extends StatelessWidget {
-  final Profile p;
-  final double swipeProgress;        // 0..1
-  final SwipeDirection? direction;   // left/right/none
-  const _ProfileCard(
-      this.p, {
-        required this.swipeProgress,
-        required this.direction,
-      });
+      // 0) Check that user is signed in
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
+        _loading = false;
+        _error = 'Not signed in (authStateChanges returned null).';
+        setState(() {});
+        return;
+      }
 
-  Color _levelColor() {
-    switch (p.level) {
-      case 'Beginner': return Colors.lightBlue.shade200;
-      case 'Intermediate': return Colors.amber.shade300;
-      case 'Expert': return Colors.redAccent.shade200;
-      default: return Colors.grey.shade300;
+      // 1) Ensure location service is enabled
+      _setStage('gps.isServiceEnabled');
+      final serviceOn = await Geolocator.isLocationServiceEnabled();
+      if (!serviceOn) {
+        _loading = false;
+        _error =
+        'Location services are OFF.\nTap "Open location settings", enable it, then Retry.';
+        setState(() {});
+        return;
+      }
+
+      // 2) Ask for permission (handle denied and forever)
+      _setStage('gps.checkPermission');
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        _setStage('gps.requestPermission');
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.deniedForever) {
+        _loading = false;
+        _error =
+        'Location permission is permanently denied.\nTap "Open app settings" and grant permission.';
+        setState(() {});
+        return;
+      }
+      if (perm == LocationPermission.denied) {
+        _loading = false;
+        _error = 'Location permission denied.';
+        setState(() {});
+        return;
+      }
+
+      // 3) Get a position with a hard timeout; fall back to last known
+      _setStage('gps.getCurrentPosition');
+      Position pos;
+      try {
+        pos = await Geolocator.getCurrentPosition(
+          timeLimit: const Duration(seconds: 12),
+        );
+      } on TimeoutException {
+        _setStage('gps.getLastKnownPosition');
+        final last = await Geolocator.getLastKnownPosition();
+        if (last == null) {
+          throw 'Could not get GPS fix (timed out) and no last known position.';
+        }
+        pos = last;
+      }
+
+      // 4) setUserLocation (Cloud Function)
+      _setStage('cf.setUserLocation');
+      await _functions
+          .httpsCallable('setUserLocation')
+          .call({'lat': pos.latitude, 'lng': pos.longitude})
+          .timeout(const Duration(seconds: 12));
+
+      // 5) refreshRecommendationsForUser (Cloud Function)
+      _setStage('cf.refreshRecommendations');
+      await _functions
+          .httpsCallable('refreshRecommendationsForUser')
+          .call({'uid': uid})
+          .timeout(const Duration(seconds: 15));
+
+      // 6) Read Firestore
+      _setStage('fs.fetchRecommendations');
+      final snap = await FirebaseFirestore.instance
+          .collection('recommendations')
+          .doc(uid)
+          .collection('items')
+          .orderBy('score', descending: true)
+          .limit(20)
+          .get(const GetOptions(source: Source.serverAndCache))
+          .timeout(const Duration(seconds: 10));
+
+      _items = snap.docs
+          .map((d) => Recommendation.fromMap(d.id, d.data()))
+          .toList();
+
+      _setStage('done');
+      _loading = false;
+      setState(() {});
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('ERROR: $_stage -> $e\n$st');
+      _loading = false;
+      _error = 'Stage: $_stage\n$e';
+      setState(() {});
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Parallax: drift opposite swipe
-    final isRight = direction == SwipeDirection.right;
-    final isLeft  = direction == SwipeDirection.left;
-    final sign = isRight ? -1.0 : (isLeft ? 1.0 : 0.0);
-    final raw = swipeProgress;
-    final safeProgress = raw.isFinite ? raw.clamp(0.0, 1.0).toDouble() : 0.0;
-    final dx = sign * (25.0 * safeProgress);
+    final cs = Theme.of(context).colorScheme;
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Transform.translate(
-            offset: Offset(dx, 0),
-            child: Image.network(
-              p.imageUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade300),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Recommendations'),
+        centerTitle: true,
+        actions: [
+          if (!useMockData)
+            IconButton(
+              tooltip: 'Use mock data (temp)',
+              onPressed: () {
+                setState(() {
+                  _error = null;
+                  _loading = false;
+                  _items = _mock();
+                  _stage = 'mock.view';
+                });
+              },
+              icon: const Icon(Icons.bug_report_outlined),
             ),
-          ),
-          // dark gradient for readability
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.center,
-                colors: [Colors.black54, Colors.transparent],
-              ),
-            ),
-          ),
-          // top-left level chip
-          Positioned(
-            left: 12,
-            top: 12,
-            child: Chip(
-              label: Text(p.level,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              backgroundColor: _levelColor(),
-            ),
-          ),
-          // bottom info
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${p.name}, ${p.age}',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w700, fontSize: 20),
-                ),
-                const SizedBox(height: 2),
-                Text('${p.distanceKm} km away',
-                    style: const TextStyle(color: Colors.white70)),
-                const SizedBox(height: 6),
-                // bio / description (2 lines)
-                Text(
-                  p.bio,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  children: p.sports.map((s) => Chip(
-                    label: Text(s),
-                    backgroundColor: Colors.lightGreen.shade200,
-                  )).toList(),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
+      body: _loading
+          ? Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 12),
+            Text('Stage: $_stage'),
+          ],
+        ),
+      )
+          : (_error != null)
+          ? _ErrorView(
+        message: _error!,
+        stage: _stage,
+        onRetry: _bootstrap,
+      )
+          : (_items.isEmpty)
+          ? _EmptyView(onRefresh: _bootstrap)
+          : ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: _items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (_, i) {
+          final r = _items[i];
+          return Material(
+            color: cs.surface,
+            elevation: 1,
+            borderRadius: BorderRadius.circular(16),
+            child: ListTile(
+              contentPadding: const EdgeInsets.all(12),
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  r.photoUrl ??
+                      'https://picsum.photos/seed/${r.id}/200/200',
+                  width: 64,
+                  height: 64,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    width: 64,
+                    height: 64,
+                    color: cs.surfaceVariant,
+                  ),
+                ),
+              ),
+              title: Text(
+                '${r.name ?? 'Athlete'}${r.age != null ? ', ${r.age}' : ''}',
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 16),
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (r.distanceKm != null)
+                    Text(_distanceText(r.distanceKm!)),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: -8,
+                    children: (r.sports ?? const [])
+                        .take(4)
+                        .map((s) => Chip(
+                      label: Text(s,
+                          style: const TextStyle(
+                              fontSize: 12)),
+                      materialTapTargetSize:
+                      MaterialTapTargetSize
+                          .shrinkWrap,
+                    ))
+                        .toList(),
+                  ),
+                ],
+              ),
+              trailing: Text(
+                (r.score ?? 0).toStringAsFixed(2),
+                style: TextStyle(
+                    color: cs.primary,
+                    fontWeight: FontWeight.w700),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  String _distanceText(double km) {
+    if (km < 1) return '${(km * 1000).round()} m away';
+    return '${km.toStringAsFixed(1)} km away';
+  }
+
+  List<Recommendation> _mock() => List.generate(
+    8,
+        (i) => Recommendation(
+      id: 'm$i',
+      name: 'Marco $i',
+      age: 28 + i,
+      score: 0.78 - i * 0.03,
+      distanceKm: 1.2 + i * 0.4,
+      sports: const ['Gym', 'CrossFit', 'Running'],
+      photoUrl: 'https://picsum.photos/seed/m$i/300/300',
+    ),
+  );
+}
+
+class _EmptyView extends StatelessWidget {
+  final VoidCallback onRefresh;
+  const _EmptyView({required this.onRefresh});
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('No recommendations yet'),
+        const SizedBox(height: 8),
+        ElevatedButton(onPressed: onRefresh, child: const Text('Refresh'))
+      ]),
     );
   }
 }
 
-class _PremiumStub extends StatelessWidget {
-  const _PremiumStub();
+class _ErrorView extends StatelessWidget {
+  final String message;
+  final String stage;
+  final VoidCallback onRetry;
+  const _ErrorView({
+    required this.message,
+    required this.stage,
+    required this.onRetry,
+  });
   @override
-  Widget build(BuildContext context) =>
-      Scaffold(appBar: AppBar(title: Text('Premium')), body: Center(child: Text('Premium page…')));
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.error_outline, size: 48),
+        const SizedBox(height: 12),
+        Text('Stage: $stage', style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        Text(message, textAlign: TextAlign.center),
+        const SizedBox(height: 12),
+        Wrap(spacing: 12, children: [
+          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+          TextButton(
+              onPressed: () => Geolocator.openLocationSettings(),
+              child: const Text('Open location settings')),
+          TextButton(
+              onPressed: () => Geolocator.openAppSettings(),
+              child: const Text('Open app settings')),
+        ])
+      ]),
+    );
+  }
+}
+
+class Recommendation {
+  final String id;
+  final String? name;
+  final int? age;
+  final double? score;
+  final double? distanceKm;
+  final List<String>? sports;
+  final String? photoUrl;
+
+  Recommendation({
+    required this.id,
+    this.name,
+    this.age,
+    this.score,
+    this.distanceKm,
+    this.sports,
+    this.photoUrl,
+  });
+
+  factory Recommendation.fromMap(String id, Map<String, dynamic> map) {
+    return Recommendation(
+      id: id,
+      name: map['name'] as String?,
+      age:
+      (map['age'] is int) ? map['age'] as int : (map['age'] as num?)?.toInt(),
+      score: (map['score'] as num?)?.toDouble(),
+      distanceKm: (map['distanceKm'] as num?)?.toDouble(),
+      sports: (map['sports'] as List?)?.map((e) => e.toString()).toList(),
+      photoUrl: map['photoUrl'] as String?,
+    );
+  }
 }

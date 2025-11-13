@@ -1,8 +1,12 @@
+// lib/src/features/profile/ui/edit_profile_screen.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:multi_select_flutter/multi_select_flutter.dart';
-import 'profile_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import '../models/user_profile.dart';
 
 const allSports = [
   "Running","Cycling","Swimming","Gym","CrossFit","Bodybuilding",
@@ -21,18 +25,19 @@ class EditProfileScreen extends StatefulWidget {
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _picker = ImagePicker();
+  bool _saving = false;
 
   late TextEditingController _name;
   late TextEditingController _bio;
   late String _level;
   late List<String> _sports;
-  String? _photoPath; // picked profile picture path or URL
+  String? _photoPath;
 
   @override
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.profile.name);
-    _bio  = TextEditingController(text: widget.profile.bio);
+    _bio = TextEditingController(text: widget.profile.bio);
     _level = widget.profile.level;
     _sports = [...widget.profile.sports];
     _photoPath = widget.profile.photoPath;
@@ -50,6 +55,51 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (x != null) setState(() => _photoPath = x.path);
   }
 
+  Future<void> _saveProfile(BuildContext context) async {
+    setState(() => _saving = true);
+
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) throw Exception("User not logged in");
+
+      String? photoUrl = widget.profile.photoPath;
+
+      // 1️⃣ If user selected a new local image, upload to Firebase Storage
+      if (_photoPath != null && !_photoPath!.startsWith('http')) {
+        final file = File(_photoPath!);
+        final ref = FirebaseStorage.instance.ref().child('profile_photos/$uid.jpg');
+        await ref.putFile(file);
+        photoUrl = await ref.getDownloadURL();
+      }
+
+      // 2️⃣ Update Firestore profile document
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'name': _name.text.trim(),
+        'bio': _bio.text.trim(),
+        'level': _level,
+        'sports': _sports,
+        'photoPath': photoUrl ?? '',
+      });
+
+      // 3️⃣ Create updated model to return to ProfileScreen
+      final updated = widget.profile.copyWith(
+        name: _name.text.trim(),
+        bio: _bio.text.trim(),
+        level: _level,
+        sports: _sports,
+        photoPath: photoUrl,
+      );
+
+      if (context.mounted) Navigator.pop(context, updated);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -59,17 +109,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         title: const Text('Edit Profile'),
         actions: [
           TextButton(
-            onPressed: () {
-              final updated = widget.profile.copyWith(
-                name: _name.text.trim(),
-                bio: _bio.text.trim(),
-                level: _level,
-                sports: _sports,
-                photoPath: _photoPath,
-              );
-              Navigator.pop(context, updated);
-            },
-            child: const Text('Save'),
+            onPressed: _saving ? null : () => _saveProfile(context),
+            child: _saving
+                ? const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+                : const Text('Save'),
           )
         ],
       ),
@@ -77,7 +127,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         child: Column(
           children: [
-            // profile picture picker
+            // Profile picture picker
             GestureDetector(
               onTap: _pickImage,
               child: Stack(
@@ -115,7 +165,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             const SizedBox(height: 12),
 
             DropdownButtonFormField<String>(
-              value: _level,
+              value: _level.isNotEmpty ? _level : null,
               decoration: _fieldDeco('Level'),
               items: const [
                 DropdownMenuItem(value: 'Beginner', child: Text('Beginner')),
@@ -147,7 +197,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ),
             const SizedBox(height: 24),
 
-            // Location (read-only)
             ListTile(
               leading: const Icon(Icons.location_on_outlined),
               title: const Text('Location'),
