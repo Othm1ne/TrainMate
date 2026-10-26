@@ -1,111 +1,45 @@
 // lib/src/features/events/ui/events_list_screen.dart
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'event_detail_screen.dart';
-import 'create_event_screen.dart';
+import '../../../data/models/event_item.dart';
+import '../../../data/models/user_profile.dart';
+import '../../../data/services/event_repository.dart';
 import '../../../shared/sports.dart';
+import '../../../shared/widgets.dart';
+import 'create_event_screen.dart';
+import 'event_detail_screen.dart';
 
-class EventItem {
-  final String id;
-  final String title;
-  final String category; // now a String from allSports
-  final DateTime dateTime;
-  final String place;
-  final double distanceKm;
-  final String cover; // URL or local file path
-  final int attendees;
-  final List<String> attendeePhotos;
-  final String description;
+export '../../../data/models/event_item.dart';
 
-  const EventItem({
-    required this.id,
-    required this.title,
-    required this.category,
-    required this.dateTime,
-    required this.place,
-    required this.distanceKm,
-    required this.cover,
-    required this.attendees,
-    required this.attendeePhotos,
-    this.description = '',
-  });
-}
-
-class EventsListScreen extends StatefulWidget {
+class EventsListScreen extends StatelessWidget {
   const EventsListScreen({super.key});
+
   @override
-  State<EventsListScreen> createState() => _EventsListScreenState();
+  Widget build(BuildContext context) =>
+      MeBuilder(builder: (_, me) => _EventsList(me: me));
 }
 
-class _EventsListScreenState extends State<EventsListScreen> {
-  String? _filter; // null = All
+class _EventsList extends StatefulWidget {
+  final UserProfile me;
+  const _EventsList({required this.me});
+  @override
+  State<_EventsList> createState() => _EventsListState();
+}
 
-  final _items = <EventItem>[
-    EventItem(
-      id: '1',
-      title: 'Morning Run',
-      category: 'Running',
-      dateTime: DateTime.now().add(const Duration(days: 1, hours: 7)),
-      place: 'Central Park',
-      distanceKm: 2.7,
-      cover: 'https://picsum.photos/seed/run/1200/800',
-      attendees: 12,
-      attendeePhotos: [
-        'https://picsum.photos/seed/a1/100/100',
-        'https://picsum.photos/seed/a2/100/100',
-        'https://picsum.photos/seed/a3/100/100',
-      ],
-    ),
-    EventItem(
-      id: '2',
-      title: 'Pickup Basketball',
-      category: 'Basketball',
-      dateTime: DateTime.now().add(const Duration(days: 2, hours: 18)),
-      place: 'Prospect Courts',
-      distanceKm: 4.0,
-      cover: 'https://picsum.photos/seed/ball/1200/800',
-      attendees: 8,
-      attendeePhotos: [
-        'https://picsum.photos/seed/b1/100/100',
-        'https://picsum.photos/seed/b2/100/100',
-      ],
-    ),
-    EventItem(
-      id: '3',
-      title: 'Sunset Yoga',
-      category: 'Yoga',
-      dateTime: DateTime.now().add(const Duration(days: 3, hours: 19)),
-      place: 'Riverside Lawn',
-      distanceKm: 1.6,
-      cover: 'https://picsum.photos/seed/yoga/1200/800',
-      attendees: 20,
-      attendeePhotos: [
-        'https://picsum.photos/seed/y1/100/100',
-        'https://picsum.photos/seed/y2/100/100',
-        'https://picsum.photos/seed/y3/100/100',
-      ],
-    ),
-  ];
+class _EventsListState extends State<_EventsList> {
+  String? _filter; // null = All, 'mine' = events I'm going to, else a sport
+  final _events = EventRepository.instance.upcoming();
 
   Future<void> _openCreate() async {
     final created = await Navigator.push<EventItem>(
       context,
-      MaterialPageRoute(builder: (_) => const CreateEventScreen()),
+      MaterialPageRoute(builder: (_) => CreateEventScreen(creator: widget.me)),
     );
-    if (created != null) {
-      setState(() => _items.insert(0, created));
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Event created')),
-      );
-    }
+    if (created != null && mounted) showSnack(context, 'Event created');
   }
 
   @override
   Widget build(BuildContext context) {
-    final list = _filter == null
-        ? _items
-        : _items.where((e) => e.category == _filter).toList();
-
+    final me = widget.me;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Events'),
@@ -130,22 +64,60 @@ class _EventsListScreenState extends State<EventsListScreen> {
           ),
         ],
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _openCreate,
+        tooltip: 'Create event',
+        child: const Icon(Icons.add),
+      ),
       body: Column(
         children: [
           const SizedBox(height: 8),
           _CategoryChips(value: _filter, onChanged: (v) => setState(() => _filter = v)),
           const SizedBox(height: 8),
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              itemCount: list.length,
-              itemBuilder: (_, i) => _EventCard(
-                item: list[i],
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => EventDetailScreen(event: list[i])),
-                ),
-              ),
+            child: StreamBuilder<List<EventItem>>(
+              stream: _events,
+              builder: (context, snap) {
+                if (snap.hasError) {
+                  return const Center(child: Text('Could not load events.'));
+                }
+                if (!snap.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final list = snap.data!.where((e) {
+                  if (_filter == null) return true;
+                  if (_filter == _mine) return e.isAttending(me.uid);
+                  return e.category == _filter;
+                }).toList();
+
+                if (list.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        _filter == _mine
+                            ? "You haven't joined any upcoming events yet."
+                            : 'No upcoming events here yet.\nCreate the first one!',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+                return ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 88),
+                  itemCount: list.length,
+                  itemBuilder: (_, i) => _EventCard(
+                    item: list[i],
+                    distanceKm: me.distanceKmTo(list[i].lat, list[i].lng),
+                    going: list[i].isAttending(me.uid),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => EventDetailScreen(event: list[i])),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -154,7 +126,9 @@ class _EventsListScreenState extends State<EventsListScreen> {
   }
 }
 
-// Horizontal scrollable chips: "All" + every sport from shared list.
+const _mine = '__mine__';
+
+// Horizontal scrollable chips: "All", "Going" + every sport from shared list.
 class _CategoryChips extends StatelessWidget {
   final String? value;
   final ValueChanged<String?> onChanged;
@@ -162,7 +136,7 @@ class _CategoryChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cats = [null, ...allSports]; // null = All
+    final cats = [null, _mine, ...allSports]; // null = All
     return SizedBox(
       height: 44,
       child: ListView.separated(
@@ -171,7 +145,7 @@ class _CategoryChips extends StatelessWidget {
         itemBuilder: (_, i) {
           final cat = cats[i];
           final selected = value == cat;
-          final label = cat ?? 'All';
+          final label = cat == null ? 'All' : (cat == _mine ? 'Going' : cat);
           return ChoiceChip(
             selected: selected,
             label: Text(label),
@@ -187,12 +161,20 @@ class _CategoryChips extends StatelessWidget {
 
 class _EventCard extends StatelessWidget {
   final EventItem item;
+  final double? distanceKm;
+  final bool going;
   final VoidCallback onTap;
-  const _EventCard({required this.item, required this.onTap});
+  const _EventCard({
+    required this.item,
+    required this.distanceKm,
+    required this.going,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final km = formatKm(distanceKm);
     return Card(
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -209,7 +191,7 @@ class _EventCard extends StatelessWidget {
                 child: SizedBox(
                   width: 78,
                   height: 78,
-                  child: _coverWidget(item.cover),
+                  child: coverImage(item.cover),
                 ),
               ),
               const SizedBox(width: 12),
@@ -217,7 +199,17 @@ class _EventCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(item.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(item.title,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w700)),
+                        ),
+                        if (going)
+                          const Icon(Icons.check_circle, size: 16, color: Colors.green),
+                      ],
+                    ),
                     const SizedBox(height: 4),
                     Row(
                       children: [
@@ -239,22 +231,23 @@ class _EventCard extends StatelessWidget {
                         const SizedBox(width: 4),
                         Text(_formatDate(item.dateTime),
                             style: TextStyle(color: cs.onSurfaceVariant)),
-                        const SizedBox(width: 12),
-                        const Icon(Icons.map_outlined, size: 16),
-                        const SizedBox(width: 4),
-                        Text('${item.distanceKm.toStringAsFixed(1)} km',
-                            style: TextStyle(color: cs.onSurfaceVariant)),
+                        if (km.isNotEmpty) ...[
+                          const SizedBox(width: 12),
+                          const Icon(Icons.map_outlined, size: 16),
+                          const SizedBox(width: 4),
+                          Text(km, style: TextStyle(color: cs.onSurfaceVariant)),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        _AttendeeStack(photos: item.attendeePhotos),
+                        AttendeeStack(photos: item.photos, size: 22),
                         const SizedBox(width: 8),
                         Text('${item.attendees} attending',
                             style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
                         const Spacer(),
-                        _CategoryPill(text: item.category),
+                        CategoryPill(text: item.category),
                       ],
                     ),
                   ],
@@ -267,52 +260,32 @@ class _EventCard extends StatelessWidget {
     );
   }
 
-  Widget _coverWidget(String cover) {
-    final isHttp = cover.startsWith('http');
-    final placeholder = Container(color: Colors.grey.shade300);
-    if (isHttp) {
-      return Image.network(
-        cover,
-        fit: BoxFit.cover,
-        loadingBuilder: (c, child, p) => p == null ? child : placeholder,
-        errorBuilder: (c, e, s) => const Icon(Icons.image_not_supported),
-      );
-    } else {
-      return Image.file(
-        File(cover),
-        fit: BoxFit.cover,
-        errorBuilder: (c, e, s) => placeholder,
-      );
-    }
-  }
-
   String _formatDate(DateTime dt) {
     final weekday = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][dt.weekday - 1];
     final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final ampm = dt.hour < 12 ? 'AM' : 'PM';
-    return '$weekday, $hour:${dt.minute.toString().padLeft(2, "0")} $ampm';
+    return '$weekday ${dt.day}, $hour:${dt.minute.toString().padLeft(2, "0")} $ampm';
   }
 }
 
-class _AttendeeStack extends StatelessWidget {
+class AttendeeStack extends StatelessWidget {
   final List<String> photos;
-  const _AttendeeStack({required this.photos});
+  final double size;
+  const AttendeeStack({super.key, required this.photos, this.size = 28});
 
   @override
   Widget build(BuildContext context) {
-    const size = 22.0;
+    final shown = photos.take(6).toList();
+    if (shown.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      width: (size * 0.6) * photos.length + size,
+      width: (size * 0.6) * (shown.length - 1) + size,
       height: size,
       child: Stack(
         children: [
-          for (int i = 0; i < photos.length; i++)
+          for (int i = 0; i < shown.length; i++)
             Positioned(
               left: i * (size * 0.6),
-              child: CircleAvatar(
-                radius: size / 2,
-                backgroundImage: NetworkImage(photos[i]),
-              ),
+              child: Avatar(url: shown[i], radius: size / 2),
             ),
         ],
       ),
@@ -320,9 +293,9 @@ class _AttendeeStack extends StatelessWidget {
   }
 }
 
-class _CategoryPill extends StatelessWidget {
+class CategoryPill extends StatelessWidget {
   final String text;
-  const _CategoryPill({required this.text});
+  const CategoryPill({super.key, required this.text});
   @override
   Widget build(BuildContext context) {
     return Container(

@@ -1,112 +1,108 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../../data/models/user_profile.dart';
+import '../../../data/services/auth_service.dart';
+import '../../../data/services/user_repository.dart';
+import '../../../shared/widgets.dart';
 import 'edit_profile_screen.dart';
 
-class UserProfile {
-  final String name;
-  final String location; // auto-detected (read-only)
-  final int joinedYear;
-  final String level; // Beginner | Intermediate | Expert
-  final String bio;
-  final List<String> sports;
-  final List<String> badges; // e.g. ["Verified","Coach"]
-  final String? photoPath;   // local file path or network URL
-
-  const UserProfile({
-    required this.name,
-    required this.location,
-    required this.joinedYear,
-    required this.level,
-    required this.bio,
-    required this.sports,
-    required this.badges,
-    this.photoPath,
-  });
-
-  UserProfile copyWith({
-    String? name,
-    String? location,
-    int? joinedYear,
-    String? level,
-    String? bio,
-    List<String>? sports,
-    List<String>? badges,
-    String? photoPath,
-  }) {
-    return UserProfile(
-      name: name ?? this.name,
-      location: location ?? this.location,
-      joinedYear: joinedYear ?? this.joinedYear,
-      level: level ?? this.level,
-      bio: bio ?? this.bio,
-      sports: sports ?? this.sports,
-      badges: badges ?? this.badges,
-      photoPath: photoPath ?? this.photoPath,
-    );
-  }
-
-  // Simple completion score: picture, level, bio, ≥1 sport
-  double get completion {
-    int have = 0;
-    if (photoPath != null && photoPath!.isNotEmpty) have++;
-    if (level.isNotEmpty) have++;
-    if (bio.trim().isNotEmpty) have++;
-    if (sports.isNotEmpty) have++;
-    return have / 4.0;
-  }
-
-  ImageProvider get photoProvider {
-    if (photoPath == null || photoPath!.isEmpty) {
-      return const AssetImage('assets/images/avatar_placeholder.png');
-    }
-    if (photoPath!.startsWith('http')) return NetworkImage(photoPath!);
-    return FileImage(File(photoPath!));
-  }
-}
-
-class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+/// Shows the signed-in user's profile (editable) or, with [uid], someone else's.
+class ProfileScreen extends StatelessWidget {
+  final String? uid;
+  const ProfileScreen({super.key, this.uid});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  Widget build(BuildContext context) {
+    final myUid = AuthService.instance.uid;
+    final isMe = uid == null || uid == myUid;
+    if (isMe) return MeBuilder(builder: (_, me) => _ProfileView(profile: me, isMe: true));
+
+    return MeBuilder(
+      builder: (_, me) => StreamBuilder<UserProfile?>(
+        stream: UserRepository.instance.watch(uid!),
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting) {
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+          final p = snap.data;
+          if (p == null) {
+            return Scaffold(
+              appBar: AppBar(),
+              body: const Center(child: Text('This profile is no longer available.')),
+            );
+          }
+          return _ProfileView(
+            profile: p,
+            isMe: false,
+            distanceKm: me.distanceKmTo(p.lat, p.lng),
+          );
+        },
+      ),
+    );
+  }
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
-  // Sample data – replace with Firestore later
-  UserProfile _profile = const UserProfile(
-    name: 'Ethan',
-    location: 'San Francisco, CA',
-    joinedYear: 2022,
-    level: 'Intermediate',
-    bio: 'Runner and weekend tennis. Up for early sessions!',
-    sports: ['Basketball', 'Tennis', 'Running'],
-    badges: ['Verified', 'Coach'],
-    photoPath:
-    'https://images.unsplash.com/photo-1544723795-3fb6469f5b39?w=512&q=80',
-  );
+class _ProfileView extends StatelessWidget {
+  final UserProfile profile;
+  final bool isMe;
+  final double? distanceKm;
+  const _ProfileView({required this.profile, required this.isMe, this.distanceKm});
+
+  Future<void> _signOut(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign out?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sign out')),
+        ],
+      ),
+    );
+    if (ok == true) await AuthService.instance.signOut();
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final p = profile;
+    final km = formatKm(distanceKm);
+    final emailVerified =
+        isMe && (AuthService.instance.currentUser?.emailVerified ?? false);
+    final badges = [
+      if (emailVerified && !p.badges.contains('Verified')) 'Verified',
+      ...p.displayBadges,
+    ];
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Profile'),
+        title: Text(isMe ? 'Profile' : p.name),
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.edit_outlined), // ✏️ pen icon
-            tooltip: 'Edit profile',
-            onPressed: () async {
-              final updated = await Navigator.push<UserProfile>(
+          if (isMe) ...[
+            IconButton(
+              icon: const Icon(Icons.edit_outlined), // ✏️ pen icon
+              tooltip: 'Edit profile',
+              onPressed: () => Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => EditProfileScreen(profile: _profile),
+                MaterialPageRoute(builder: (_) => EditProfileScreen(profile: p)),
+              ),
+            ),
+            PopupMenuButton<String>(
+              onSelected: (v) {
+                if (v == 'signout') _signOut(context);
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'signout',
+                  child: Row(children: [
+                    Icon(Icons.logout),
+                    SizedBox(width: 12),
+                    Text('Sign out'),
+                  ]),
                 ),
-              );
-              if (updated != null) setState(() => _profile = updated);
-            },
-          )
+              ],
+            ),
+          ],
         ],
       ),
       body: SingleChildScrollView(
@@ -117,83 +113,98 @@ class _ProfileScreenState extends State<ProfileScreen> {
             // Header
             Column(
               children: [
-                CircleAvatar(radius: 40, backgroundImage: _profile.photoProvider),
+                Avatar(url: p.photoPath, radius: 40),
                 const SizedBox(height: 12),
-                Text(_profile.name,
+                Text(p.age > 0 && !isMe ? '${p.name}, ${p.age}' : p.name,
                     style: Theme.of(context)
                         .textTheme
                         .titleLarge
                         ?.copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
-                Text(_profile.location, style: TextStyle(color: cs.onSurfaceVariant)),
-                Text('Joined ${_profile.joinedYear}',
+                if (km.isNotEmpty)
+                  Text('$km away', style: TextStyle(color: cs.onSurfaceVariant))
+                else if (p.location.isNotEmpty)
+                  Text(p.location, style: TextStyle(color: cs.onSurfaceVariant)),
+                Text('${p.level} · Joined ${p.joinedYear}',
                     style: TextStyle(color: cs.onSurfaceVariant)),
               ],
             ),
             const SizedBox(height: 16),
 
             // Completion card
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: cs.surface,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: kElevationToShadow[1],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    const Expanded(
-                      child: Text('Profile Completion',
-                          style: TextStyle(fontWeight: FontWeight.w600)),
+            if (isMe && p.completion < 1) ...[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: cs.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: kElevationToShadow[1],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Expanded(
+                        child: Text('Profile Completion',
+                            style: TextStyle(fontWeight: FontWeight.w600)),
+                      ),
+                      Text('${(p.completion * 100).round()}%',
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                    ]),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: p.completion,
+                        minHeight: 8,
+                        color: cs.primary,
+                        backgroundColor: cs.primary.withValues(alpha: .15),
+                      ),
                     ),
-                    Text('${(_profile.completion * 100).round()}%',
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
-                  ]),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: LinearProgressIndicator(
-                      value: _profile.completion,
-                      minHeight: 8,
-                      color: cs.primary,
-                      backgroundColor: cs.primary.withOpacity(.15),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text('Complete your profile to find better matches!',
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant))
-                ],
+                    const SizedBox(height: 6),
+                    Text('Complete your profile to find better matches!',
+                        style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant))
+                  ],
+                ),
               ),
-            ),
-
-            const SizedBox(height: 20),
+              const SizedBox(height: 20),
+            ],
 
             // Badges
-            const Text('Badges', style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _profile.badges.map((b) {
-                final isVerified = b.toLowerCase() == 'verified';
-                final color = isVerified ? Colors.blue : Colors.green;
-                final icon = isVerified ? Icons.verified : Icons.school;
-                return Chip(
-                  avatar: Icon(icon, size: 16, color: Colors.white),
-                  label: Text(b, style: const TextStyle(color: Colors.white)),
-                  backgroundColor: color,
-                );
-              }).toList(),
-            ),
-
-            const SizedBox(height: 20),
+            if (badges.isNotEmpty) ...[
+              const Text('Badges', style: TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: badges.map((b) {
+                  final (color, icon) = switch (b.toLowerCase()) {
+                    'verified' => (Colors.blue, Icons.verified),
+                    'premium' => (Colors.amber.shade700, Icons.workspace_premium),
+                    _ => (Colors.green, Icons.school),
+                  };
+                  return Chip(
+                    avatar: Icon(icon, size: 16, color: Colors.white),
+                    label: Text(b, style: const TextStyle(color: Colors.white)),
+                    backgroundColor: color,
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 20),
+            ],
 
             // About me
             const Text('About me', style: TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            Text(_profile.bio, style: const TextStyle(fontSize: 14)),
+            Text(
+              p.bio.isNotEmpty
+                  ? p.bio
+                  : (isMe ? 'Tell others about your training goals — tap ✏️.' : 'No bio yet.'),
+              style: TextStyle(
+                fontSize: 14,
+                color: p.bio.isEmpty ? cs.onSurfaceVariant : null,
+              ),
+            ),
 
             const SizedBox(height: 20),
 
@@ -203,7 +214,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: _profile.sports
+              children: p.sports
                   .map((s) => Chip(
                 label: Text(s),
                 backgroundColor: Colors.grey.shade200,

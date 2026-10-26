@@ -1,12 +1,15 @@
 // lib/src/features/events/ui/create_event_screen.dart
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'events_list_screen.dart';
+import '../../../data/models/event_item.dart';
+import '../../../data/models/user_profile.dart';
+import '../../../data/services/event_repository.dart';
 import '../../../shared/sports.dart';
+import '../../../shared/widgets.dart';
 
 class CreateEventScreen extends StatefulWidget {
-  const CreateEventScreen({super.key});
+  final UserProfile creator;
+  const CreateEventScreen({super.key, required this.creator});
   @override
   State<CreateEventScreen> createState() => _CreateEventScreenState();
 }
@@ -14,11 +17,13 @@ class CreateEventScreen extends StatefulWidget {
 class _CreateEventScreenState extends State<CreateEventScreen> {
   final _title = TextEditingController();
   final _place = TextEditingController();
-  final _distance = TextEditingController();
-  final _desc = TextEditingController();                // <-- NEW
-  String _category = allSports.first;
+  final _desc = TextEditingController();
+  late String _category = widget.creator.sports.isNotEmpty
+      ? widget.creator.sports.first
+      : allSports.first;
   DateTime _dateTime = DateTime.now().add(const Duration(days: 1));
   String? _coverPath;
+  bool _saving = false;
 
   final _picker = ImagePicker();
 
@@ -26,13 +31,13 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
   void dispose() {
     _title.dispose();
     _place.dispose();
-    _distance.dispose();
-    _desc.dispose();                                    // <-- NEW
+    _desc.dispose();
     super.dispose();
   }
 
   Future<void> _pickCover() async {
-    final x = await _picker.pickImage(source: ImageSource.gallery);
+    final x = await _picker.pickImage(
+        source: ImageSource.gallery, maxWidth: 1600, imageQuality: 85);
     if (x != null) setState(() => _coverPath = x.path);
   }
 
@@ -43,7 +48,7 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
       lastDate: DateTime.now().add(const Duration(days: 365)),
       initialDate: _dateTime,
     );
-    if (date == null) return;
+    if (date == null || !mounted) return;
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_dateTime),
@@ -54,27 +59,36 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
     });
   }
 
-  void _create() {
+  Future<void> _create() async {
     if (_title.text.trim().isEmpty || _place.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Please enter title and place')));
+      showSnack(context, 'Please enter title and place');
       return;
     }
-    final dist = double.tryParse(_distance.text.trim()) ?? 0.0;
-
-    final item = EventItem(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: _title.text.trim(),
-      category: _category,
-      dateTime: _dateTime,
-      place: _place.text.trim(),
-      distanceKm: dist,
-      cover: _coverPath ?? 'https://picsum.photos/seed/new/1200/800',
-      attendees: 0,
-      attendeePhotos: const [],
-      description: _desc.text.trim(),                   // <-- NEW
-    );
-    Navigator.pop(context, item);
+    if (_dateTime.isBefore(DateTime.now())) {
+      showSnack(context, 'Pick a date in the future');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final item = await EventRepository.instance.create(
+        EventItem(
+          id: '',
+          title: _title.text.trim(),
+          category: _category,
+          dateTime: _dateTime,
+          place: _place.text.trim(),
+          cover: _coverPath ?? '',
+          description: _desc.text.trim(),
+        ),
+        widget.creator,
+      );
+      if (mounted) Navigator.pop(context, item);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _saving = false);
+        showSnack(context, 'Could not create the event. Try again.');
+      }
+    }
   }
 
   @override
@@ -91,42 +105,46 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
               onTap: _pickCover,
               child: Container(
                 height: 160,
+                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: Colors.grey.shade200,
                   borderRadius: BorderRadius.circular(12),
-                  image: _coverPath == null
-                      ? null
-                      : DecorationImage(
-                    image: FileImage(File(_coverPath!)),
-                    fit: BoxFit.cover,
-                  ),
                 ),
                 child: _coverPath == null
-                    ? Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    Icon(Icons.add_photo_alternate_outlined, size: 36),
-                    SizedBox(height: 6),
-                    Text('Add cover photo'),
-                  ],
-                )
-                    : null,
+                    ? const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add_photo_alternate_outlined, size: 36),
+                            SizedBox(height: 6),
+                            Text('Add cover photo'),
+                          ],
+                        ),
+                      )
+                    : SizedBox.expand(child: coverImage(_coverPath!)),
               ),
             ),
             const SizedBox(height: 16),
 
-            TextField(controller: _title, decoration: _deco('Title')),
+            TextField(
+              controller: _title,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: _deco('Title'),
+            ),
             const SizedBox(height: 12),
 
             DropdownButtonFormField<String>(
-              value: _category,
+              initialValue: _category,
               decoration: _deco('Category'),
               items: allSports.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
               onChanged: (v) => setState(() => _category = v ?? _category),
             ),
             const SizedBox(height: 12),
 
-            TextField(controller: _place, decoration: _deco('Place')),
+            TextField(
+              controller: _place,
+              decoration: _deco('Place (address or venue, city)'),
+            ),
             const SizedBox(height: 12),
 
             // Description (multi-line)
@@ -134,6 +152,7 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
               controller: _desc,
               minLines: 3,
               maxLines: 6,
+              textCapitalization: TextCapitalization.sentences,
               decoration: _deco('Description (details, meeting point, pace, etc.)'),
             ),
             const SizedBox(height: 12),
@@ -150,14 +169,20 @@ class _CreateEventScreenState extends State<CreateEventScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _create,
+                onPressed: _saving ? null : _create,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: cs.primary,
-                  foregroundColor: Colors.white,
+                  foregroundColor: cs.onPrimary,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: const Text('Create Event'),
+                child: _saving
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Create Event'),
               ),
             ),
           ],

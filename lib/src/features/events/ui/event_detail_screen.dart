@@ -1,5 +1,9 @@
 // lib/src/features/events/ui/event_detail_screen.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../../../data/models/user_profile.dart';
+import '../../../data/services/event_repository.dart';
+import '../../../shared/widgets.dart';
 import 'events_list_screen.dart';
 
 class EventDetailScreen extends StatefulWidget {
@@ -11,12 +15,78 @@ class EventDetailScreen extends StatefulWidget {
 }
 
 class _EventDetailScreenState extends State<EventDetailScreen> {
-  bool _joined = false;
+  late final Stream<EventItem?> _stream =
+      EventRepository.instance.watch(widget.event.id);
+  bool _busy = false;
+
+  Future<void> _toggleJoin(EventItem e, UserProfile me) async {
+    setState(() => _busy = true);
+    final joined = e.isAttending(me.uid);
+    try {
+      joined
+          ? await EventRepository.instance.leave(e.id, me.uid)
+          : await EventRepository.instance.join(e.id, me);
+      if (mounted) showSnack(context, joined ? 'Left event' : 'Joined event');
+    } catch (_) {
+      if (mounted) showSnack(context, 'Something went wrong. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _share(EventItem e) async {
+    await Clipboard.setData(ClipboardData(
+      text: '${e.title} – ${e.category}\n${_longDate(e.dateTime)} at ${e.place}\nJoin me on TrainMate!',
+    ));
+    if (mounted) showSnack(context, 'Event details copied to clipboard');
+  }
+
+  Future<void> _delete(EventItem e) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete event?'),
+        content: const Text('Attendees will no longer see it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await EventRepository.instance.delete(e.id);
+    if (mounted) Navigator.pop(context);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final e = widget.event;
+    return MeBuilder(
+      builder: (context, me) => StreamBuilder<EventItem?>(
+        stream: _stream,
+        initialData: widget.event,
+        builder: (context, snap) {
+          final e = snap.data;
+          if (e == null) {
+            return Scaffold(
+              appBar: AppBar(),
+              body: const Center(child: Text('This event was deleted.')),
+            );
+          }
+          return _build(context, e, me);
+        },
+      ),
+    );
+  }
+
+  Widget _build(BuildContext context, EventItem e, UserProfile me) {
     final cs = Theme.of(context).colorScheme;
+    final joined = e.isAttending(me.uid);
+    final isCreator = e.creatorId == me.uid;
+    final km = formatKm(me.distanceKmTo(e.lat, e.lng));
 
     return Scaffold(
       body: CustomScrollView(
@@ -26,15 +96,26 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             pinned: true,
             expandedHeight: 220,
             actions: [
-              IconButton(icon: const Icon(Icons.share_outlined), onPressed: () {}),
-              IconButton(icon: const Icon(Icons.more_vert), onPressed: () {}),
+              IconButton(
+                icon: const Icon(Icons.share_outlined),
+                onPressed: () => _share(e),
+              ),
+              if (isCreator)
+                PopupMenuButton<String>(
+                  onSelected: (v) {
+                    if (v == 'delete') _delete(e);
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'delete', child: Text('Delete event')),
+                  ],
+                ),
             ],
             flexibleSpace: FlexibleSpaceBar(
               background: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.network(e.cover, fit: BoxFit.cover),
-                  Container(color: Colors.black.withOpacity(.25)),
+                  coverImage(e.cover),
+                  Container(color: Colors.black.withValues(alpha: .25)),
                 ],
               ),
             ),
@@ -55,7 +136,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             ?.copyWith(fontWeight: FontWeight.w800),
                       ),
                     ),
-                    _CategoryPill(text: e.category),
+                    CategoryPill(text: e.category),
                   ]),
                   const SizedBox(height: 6),
                   Row(children: [
@@ -68,22 +149,25 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     const Icon(Icons.calendar_today_outlined, size: 18),
                     const SizedBox(width: 6),
                     Text(_longDate(e.dateTime)),
-                    const SizedBox(width: 12),
-                    const Icon(Icons.map_outlined, size: 18),
-                    const SizedBox(width: 6),
-                    Text('${e.distanceKm.toStringAsFixed(1)} km away'),
+                    if (km.isNotEmpty) ...[
+                      const SizedBox(width: 12),
+                      const Icon(Icons.map_outlined, size: 18),
+                      const SizedBox(width: 6),
+                      Text('$km away'),
+                    ],
                   ]),
                   const SizedBox(height: 16),
                   Text(
-                    'Join us for a refreshing ${e.category.toLowerCase()} session. '
-                        'All levels are welcome. We meet at the main entrance.',
-                    style: TextStyle(color: cs.onSurface.withOpacity(.9)),
+                    e.description.isNotEmpty
+                        ? e.description
+                        : 'Join us for a ${e.category.toLowerCase()} session. All levels are welcome.',
+                    style: TextStyle(color: cs.onSurface.withValues(alpha: .9)),
                   ),
                   const SizedBox(height: 16),
-                  Text('Attendees (${e.attendees}${_joined ? '+1' : ''})',
+                  Text('Attendees (${e.attendees})',
                       style: const TextStyle(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
-                  _AttendeeStack(photos: e.attendeePhotos),
+                  AttendeeStack(photos: e.photos),
                 ],
               ),
             ),
@@ -96,19 +180,14 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           child: SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
-                setState(() => _joined = !_joined);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(_joined ? 'Joined event' : 'Left event')),
-                );
-              },
+              onPressed: _busy ? null : () => _toggleJoin(e, me),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _joined ? Colors.grey.shade300 : cs.primary,
-                foregroundColor: _joined ? Colors.black : Colors.white,
+                backgroundColor: joined ? Colors.grey.shade300 : cs.primary,
+                foregroundColor: joined ? Colors.black : cs.onPrimary,
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
-              child: Text(_joined ? 'Leave Event' : 'Join Event'),
+              child: Text(joined ? 'Leave Event' : 'Join Event'),
             ),
           ),
         ),
@@ -122,46 +201,5 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final ampm = dt.hour < 12 ? 'AM' : 'PM';
     return '$m ${dt.day}, $hour:${dt.minute.toString().padLeft(2, "0")} $ampm';
-  }
-}
-
-class _CategoryPill extends StatelessWidget {
-  final String text;
-  const _CategoryPill({required this.text});
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.lightBlue.shade100,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Text(text, style: const TextStyle(fontSize: 12)),
-    );
-  }
-}
-
-class _AttendeeStack extends StatelessWidget {
-  final List<String> photos;
-  const _AttendeeStack({required this.photos});
-  @override
-  Widget build(BuildContext context) {
-    final size = 28.0;
-    final maxShown = photos.length.clamp(0, 6);
-    return SizedBox(
-      height: size,
-      child: Stack(
-        children: [
-          for (int i = 0; i < maxShown; i++)
-            Positioned(
-              left: i * (size * 0.6),
-              child: CircleAvatar(
-                radius: size / 2,
-                backgroundImage: NetworkImage(photos[i]),
-              ),
-            ),
-        ],
-      ),
-    );
   }
 }

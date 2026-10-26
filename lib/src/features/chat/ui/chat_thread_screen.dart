@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'chat_list_screen.dart';
-
-// If you already have another user's profile page, import it here
-// import '../../profile/ui/other_user_profile_screen.dart';
+import '../../../data/models/chat.dart';
+import '../../../data/services/auth_service.dart';
+import '../../../data/services/chat_repository.dart';
+import '../../../data/services/user_repository.dart';
+import '../../../shared/widgets.dart';
+import '../../profile/ui/profile_screen.dart';
 
 class ChatThreadScreen extends StatefulWidget {
   final ChatThread thread;
@@ -15,17 +17,13 @@ class ChatThreadScreen extends StatefulWidget {
 class _ChatThreadScreenState extends State<ChatThreadScreen> {
   final _controller = TextEditingController();
   final _scroll = ScrollController();
-
-  bool _muted = false;
-  bool _blocked = false;
-
-  final _messages = <Message>[
-    Message(text: 'Hey, are you still up for tennis tomorrow?', isMe: false),
-    Message(text: 'Yeah, I’m ready to go! What time works for you?', isMe: true),
-    Message(text: 'How about 10 AM at the Central Park courts?', isMe: false),
-    Message(text: 'Sounds perfect! See you there.', isMe: true),
-    Message(text: 'Great! Looking forward to it.', isMe: false),
-  ];
+  final _myUid = AuthService.instance.uid;
+  late final Stream<ChatThread> _threadStream =
+      ChatRepository.instance.thread(widget.thread.id, _myUid);
+  late final Stream<List<Message>> _messages =
+      ChatRepository.instance.messages(widget.thread.id, _myUid);
+  late ChatThread _t = widget.thread;
+  int _lastCount = 0;
 
   @override
   void dispose() {
@@ -34,95 +32,125 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     super.dispose();
   }
 
+  bool get _blocked => _t.blockedByMe || _t.blockedByOther;
+
   @override
   Widget build(BuildContext context) {
-    final t = widget.thread;
-
-    return Scaffold(
-      appBar: AppBar(
-        leading: const BackButton(),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-            Row(
+    return StreamBuilder<ChatThread>(
+      stream: _threadStream,
+      initialData: widget.thread,
+      builder: (context, snap) {
+        _t = snap.data ?? widget.thread;
+        return Scaffold(
+          appBar: AppBar(
+            leading: const BackButton(),
+            title: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_muted)
+                Avatar(url: _t.avatar, radius: 16),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(_t.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                if (_t.muted)
                   const Padding(
-                    padding: EdgeInsets.only(right: 6),
+                    padding: EdgeInsets.only(left: 6),
                     child: Icon(Icons.notifications_off, size: 14),
                   ),
-                const Text('Online', style: TextStyle(fontSize: 12)),
               ],
             ),
-          ],
-        ),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.more_vert),
-            onPressed: _openOptions,
-            tooltip: 'Options',
-          )
-        ],
-      ),
-      body: Column(
-        children: [
-          if (_blocked)
-            Container(
-              width: double.infinity,
-              color: Colors.red.withOpacity(.1),
-              padding: const EdgeInsets.all(12),
-              child: const Text(
-                'You blocked this user. You can unblock them from settings.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.red),
-              ),
-            ),
-          Expanded(
-            child: ListView.builder(
-              controller: _scroll,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              itemCount: _messages.length,
-              itemBuilder: (_, i) => _Bubble(msg: _messages[i]),
-            ),
+            centerTitle: true,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.more_vert),
+                onPressed: _openOptions,
+                tooltip: 'Options',
+              )
+            ],
           ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      enabled: !_blocked,
-                      controller: _controller,
-                      minLines: 1,
-                      maxLines: 5,
-                      decoration: InputDecoration(
-                        hintText: _blocked ? 'Blocked' : 'Type a message…',
-                        filled: true,
-                        fillColor: Colors.grey.shade200,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide.none,
+          body: Column(
+            children: [
+              if (_blocked)
+                Container(
+                  width: double.infinity,
+                  color: Colors.red.withValues(alpha: .1),
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    _t.blockedByMe
+                        ? 'You blocked this user. Unblock them from the ⋮ menu.'
+                        : 'You can no longer reply to this conversation.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ),
+              Expanded(
+                child: StreamBuilder<List<Message>>(
+                  stream: _messages,
+                  builder: (context, snap) {
+                    if (!snap.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final msgs = snap.data!;
+                    if (msgs.isEmpty) {
+                      return Center(
+                        child: Text('Say hi to ${_t.name} 👋',
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                      );
+                    }
+                    if (msgs.length != _lastCount) {
+                      _lastCount = msgs.length;
+                      _scrollToBottom();
+                    }
+                    return ListView.builder(
+                      controller: _scroll,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      itemCount: msgs.length,
+                      itemBuilder: (_, i) => _Bubble(msg: msgs[i]),
+                    );
+                  },
+                ),
+              ),
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          enabled: !_blocked,
+                          controller: _controller,
+                          minLines: 1,
+                          maxLines: 5,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: InputDecoration(
+                            hintText: _blocked ? 'Blocked' : 'Type a message…',
+                            filled: true,
+                            fillColor: Colors.grey.shade200,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                          ),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        onPressed: _blocked ? null : _send,
+                        icon: const Icon(Icons.send),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _blocked ? null : _send,
-                    icon: const Icon(Icons.send),
-                  ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -146,41 +174,39 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                 label: 'View Profile',
                 onTap: () {
                   Navigator.pop(ctx);
-                  // TODO: navigate to the other user's profile page
                   Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => _ViewProfileStub(name: widget.thread.name, avatar: widget.thread.avatar)));
+                      MaterialPageRoute(builder: (_) => ProfileScreen(uid: _t.otherUid)));
                 },
               ),
               _OptionTile(
-                icon: _muted ? Icons.notifications_off : Icons.notifications_active_outlined,
-                label: _muted ? 'Unmute Notifications' : 'Mute Notifications',
-                onTap: () {
-                  setState(() => _muted = !_muted);
+                icon: _t.muted ? Icons.notifications_off : Icons.notifications_active_outlined,
+                label: _t.muted ? 'Unmute Notifications' : 'Mute Notifications',
+                onTap: () async {
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(_muted ? 'Conversation muted' : 'Conversation unmuted'),
-                      duration: const Duration(seconds: 1),
-                    ),
-                  );
+                  final muted = !_t.muted;
+                  await ChatRepository.instance.setMuted(_t.id, _myUid, muted);
+                  if (mounted) showSnack(context, muted ? 'Conversation muted' : 'Conversation unmuted');
                 },
               ),
               _OptionTile(
                 icon: Icons.block,
-                label: 'Block',
-                danger: true,
+                label: _t.blockedByMe ? 'Unblock' : 'Block',
+                danger: !_t.blockedByMe,
                 onTap: () async {
                   Navigator.pop(ctx);
+                  if (_t.blockedByMe) {
+                    await ChatRepository.instance.setBlocked(_t, _myUid, false);
+                    if (mounted) showSnack(context, 'User unblocked');
+                    return;
+                  }
                   final ok = await _confirm(
-                    title: 'Block ${widget.thread.name}?',
+                    title: 'Block ${_t.name}?',
                     message: 'They will no longer be able to message you.',
                     confirmLabel: 'Block',
                   );
                   if (ok == true) {
-                    setState(() => _blocked = true);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('User blocked')),
-                    );
+                    await ChatRepository.instance.setBlocked(_t, _myUid, true);
+                    if (mounted) showSnack(context, 'User blocked');
                   }
                 },
               ),
@@ -191,14 +217,17 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                 onTap: () async {
                   Navigator.pop(ctx);
                   final ok = await _confirm(
-                    title: 'Report ${widget.thread.name}?',
+                    title: 'Report ${_t.name}?',
                     message: 'We’ll review this conversation for policy violations.',
                     confirmLabel: 'Report',
                   );
                   if (ok == true) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Report submitted')),
+                    await UserRepository.instance.report(
+                      reporterId: _myUid,
+                      reportedId: _t.otherUid,
+                      chatId: _t.id,
                     );
+                    if (mounted) showSnack(context, 'Report submitted');
                   }
                 },
               ),
@@ -217,16 +246,16 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   }) {
     return showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: Text(title),
         content: Text(message),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton.tonal(
-            onPressed: () => Navigator.pop(context, true),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(
               foregroundColor: Colors.white,
-              backgroundColor: confirmLabel == 'Report' ? Colors.red : null,
+              backgroundColor: Colors.red,
             ),
             child: Text(confirmLabel),
           ),
@@ -235,16 +264,24 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     );
   }
 
-  void _send() {
+  Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
-    setState(() {
-      _messages.add(Message(text: text, isMe: true));
-      _controller.clear();
-    });
-    Future.delayed(const Duration(milliseconds: 50), () {
+    _controller.clear();
+    try {
+      await ChatRepository.instance.send(_t.id, _myUid, text);
+    } catch (_) {
+      if (!mounted) return;
+      _controller.text = text;
+      showSnack(context, 'Message not sent. Check your connection.');
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
       _scroll.animateTo(
-        _scroll.position.maxScrollExtent + 60,
+        _scroll.position.maxScrollExtent,
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
@@ -252,13 +289,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   }
 }
 
-// --- Models & UI bits --------------------------------------------------------
-
-class Message {
-  final String text;
-  final bool isMe;
-  const Message({required this.text, required this.isMe});
-}
+// --- UI bits -----------------------------------------------------------------
 
 class _Bubble extends StatelessWidget {
   final Message msg;
@@ -269,7 +300,9 @@ class _Bubble extends StatelessWidget {
     final isMe = msg.isMe;
     final cs = Theme.of(context).colorScheme;
     final bg = isMe ? cs.primary : Colors.grey.shade200;
-    final fg = isMe ? Colors.white : Colors.black87;
+    final fg = isMe ? cs.onPrimary : Colors.black87;
+    final time =
+        '${msg.sentAt.hour.toString().padLeft(2, '0')}:${msg.sentAt.minute.toString().padLeft(2, '0')}';
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -288,7 +321,14 @@ class _Bubble extends StatelessWidget {
             bottomRight: Radius.circular(isMe ? 4 : 16),
           ),
         ),
-        child: Text(msg.text, style: TextStyle(color: fg)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(msg.text, style: TextStyle(color: fg)),
+            const SizedBox(height: 2),
+            Text(time, style: TextStyle(color: fg.withValues(alpha: .6), fontSize: 10)),
+          ],
+        ),
       ),
     );
   }
@@ -309,7 +349,7 @@ class _OptionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = danger ? Colors.red : Theme.of(context).colorScheme.onSurface;
-    final bg = danger ? Colors.red.withOpacity(.06) : Colors.grey.shade100;
+    final bg = danger ? Colors.red.withValues(alpha: .06) : Colors.grey.shade100;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
@@ -319,28 +359,6 @@ class _OptionTile extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         tileColor: bg,
         onTap: onTap,
-      ),
-    );
-  }
-}
-
-// Simple placeholder for "View Profile" until you wire a real screen.
-class _ViewProfileStub extends StatelessWidget {
-  final String name;
-  final String avatar;
-  const _ViewProfileStub({required this.name, required this.avatar});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(name)),
-      body: Center(
-        child: CircleAvatar(
-          radius: 60,
-          backgroundColor: Colors.grey.shade300,
-          backgroundImage: NetworkImage(avatar),
-          onBackgroundImageError: (_, __) {},
-        ),
       ),
     );
   }

@@ -1,0 +1,90 @@
+{
+  "project_info": {
+    "project_number": "271386691069",
+    "project_id": "train-mate-7mmmc2",
+    "storage_bucket": "train-mate-7mmmc2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:271386691069:android:257bde1951e79abe36c594",
+        "android_client_info": {
+          "package_name": "com.dev.trainmate"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "271386691069-oa2va1b5rj2oa79ec6730hap76gnaevs.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dev.trainmate",
+            "certificate_hash": "9bbb3186b2189ef16d8f272bdab59362c395cbb4"
+          }
+        },
+        {
+          "client_id": "271386691069-eiiuk01ck6tnljp4cuim2t7731l29mhe.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDbdLmaXRbDS-gobS1ZH1Ui6PzFYptIyNI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "271386691069-eiiuk01ck6tnljp4cuim2t7731l29mhe.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "271386691069-m8e9jmm9jtdke3qsdpne4k3j1doeuhrq.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.dev.trainmate"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:271386691069:android:05317b0c6a9de7e736c594",
+        "android_client_info": {
+          "package_name": "com.trainmate.trainmate"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "271386691069-eiiuk01ck6tnljp4cuim2t7731l29mhe.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDbdLmaXRbDS-gobS1ZH1Ui6PzFYptIyNI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "271386691069-eiiuk01ck6tnljp4cuim2t7731l29mhe.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "271386691069-m8e9jmm9jtdke3qsdpne4k3j1doeuhrq.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.dev.trainmate"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -2,10 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>TrainMate uses your location to show sport partners and events near you.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TrainMate needs access to your photos to set your profile picture and event covers.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>TrainMate uses the camera to take your profile picture.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Trainmate</string>
+	<string>TrainMate</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

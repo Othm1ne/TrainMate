@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import '../../../data/models/chat.dart';
+import '../../../data/services/auth_service.dart';
+import '../../../data/services/chat_repository.dart';
+import '../../../shared/widgets.dart';
 import 'chat_thread_screen.dart';
 
 class ChatListScreen extends StatefulWidget {
@@ -10,51 +14,8 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _search = TextEditingController();
-
-  final _threads = <ChatThread>[
-    ChatThread(
-      name: 'Ethan Harper',
-      avatar: 'https://images.unsplash.com/photo-1544723795-3fb6469f5b39?w=200',
-      lastMessage: 'See you at the gym!',
-      lastTime: DateTime.now().subtract(const Duration(minutes: 10)),
-    ),
-    ChatThread(
-      name: 'Olivia Bennett',
-      avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200',
-      lastMessage: "I'm ready to play!",
-      lastTime: DateTime.now().subtract(const Duration(minutes: 20)),
-    ),
-    ChatThread(
-      name: 'Noah Carter',
-      avatar: 'https://images.unsplash.com/photo-1603415526960-f7e0328d13df?w=200',
-      lastMessage: "I'm on my way!",
-      lastTime: DateTime.now().subtract(const Duration(minutes: 30)),
-    ),
-    ChatThread(
-      name: 'Ava Mitchell',
-      avatar: 'https://images.unsplash.com/photo-1544006659-f0b21884ce1d?w=200',
-      lastMessage: "I'm ready to play!",
-      lastTime: DateTime.now().subtract(const Duration(minutes: 40)),
-    ),
-    ChatThread(
-      name: 'Liam Foster',
-      avatar: 'https://images.unsplash.com/photo-1552374196-c4e7ffc6e126?w=200',
-      lastMessage: "I'm on my way!",
-      lastTime: DateTime.now().subtract(const Duration(minutes: 50)),
-    ),
-    ChatThread(
-      name: 'Sophia Reynolds',
-      avatar: 'https://images.unsplash.com/photo-1547425260-76bcadfb4f2c?w=200',
-      lastMessage: "I'm ready to play!",
-      lastTime: DateTime.now().subtract(const Duration(hours: 1)),
-    ),
-    ChatThread(
-      name: 'Jackson Hayes',
-      avatar: 'https://images.unsplash.com/photo-1527980965255-d3b416303d12?w=200',
-      lastMessage: "I'm on my way!",
-      lastTime: DateTime.now().subtract(const Duration(hours: 2)),
-    ),
-  ];
+  late final Stream<List<ChatThread>> _threads =
+      ChatRepository.instance.threads(AuthService.instance.uid);
 
   @override
   void dispose() {
@@ -64,13 +25,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _threads.where((t) {
-      final q = _search.text.trim().toLowerCase();
-      if (q.isEmpty) return true;
-      return t.name.toLowerCase().contains(q) ||
-          t.lastMessage.toLowerCase().contains(q);
-    }).toList();
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chats'),
@@ -100,37 +54,77 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: ListView.separated(
-              itemCount: filtered.length,
-              separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
-              itemBuilder: (context, i) {
-                final t = filtered[i];
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundImage: NetworkImage(t.avatar),
-                    onBackgroundImageError: (_, __) {},
-                    backgroundColor: Colors.grey.shade300,
-                  ),
-                  title: Text(t.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(
-                    t.lastMessage,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: Text(
-                    _relativeTime(t.lastTime),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontSize: 12,
-                    ),
-                  ),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ChatThreadScreen(thread: t),
+            child: StreamBuilder<List<ChatThread>>(
+              stream: _threads,
+              builder: (context, snap) {
+                if (snap.hasError) {
+                  return const Center(child: Text('Could not load chats.'));
+                }
+                if (!snap.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final q = _search.text.trim().toLowerCase();
+                final filtered = snap.data!.where((t) {
+                  if (q.isEmpty) return true;
+                  return t.name.toLowerCase().contains(q) ||
+                      t.lastMessage.toLowerCase().contains(q);
+                }).toList();
+
+                if (filtered.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        q.isEmpty
+                            ? 'No conversations yet.\nMatch with someone on Home to start chatting!'
+                            : 'No chats match "$q".',
+                        textAlign: TextAlign.center,
                       ),
+                    ),
+                  );
+                }
+
+                return ListView.separated(
+                  itemCount: filtered.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
+                  itemBuilder: (context, i) {
+                    final t = filtered[i];
+                    return ListTile(
+                      leading: Avatar(url: t.avatar),
+                      title: Row(
+                        children: [
+                          Flexible(
+                            child: Text(t.name,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.w600)),
+                          ),
+                          if (t.muted)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 6),
+                              child: Icon(Icons.notifications_off, size: 14),
+                            ),
+                        ],
+                      ),
+                      subtitle: Text(
+                        t.lastMessage,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Text(
+                        _relativeTime(t.lastTime),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ChatThreadScreen(thread: t),
+                          ),
+                        );
+                      },
                     );
                   },
                 );
@@ -148,20 +142,5 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (d.inMinutes < 60) return '${d.inMinutes}m';
     if (d.inHours < 24) return '${d.inHours}h';
     return '${d.inDays}d';
-    // you can swap to a package like "timeago" later if you want locales
   }
-}
-
-class ChatThread {
-  final String name;
-  final String avatar;
-  final String lastMessage;
-  final DateTime lastTime;
-
-  const ChatThread({
-    required this.name,
-    required this.avatar,
-    required this.lastMessage,
-    required this.lastTime,
-  });
 }

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import '../data/services/auth_service.dart';
+import '../data/services/user_repository.dart';
 import '../features/home/ui/home_screen.dart';
 import 'package:convex_bottom_bar/convex_bottom_bar.dart';
+import '../features/premium/ui/premium_screen.dart';
 import '../features/profile/ui/profile_screen.dart';
 import '../features/chat/ui/chat_list_screen.dart';
 import '../features/events/ui/events_list_screen.dart';
@@ -14,22 +17,37 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   // 0 Chat, 1 Events, 2 Home, 3 Profile, 4 Premium
   int _tab = 2;
+  final _barKey = GlobalKey<ConvexAppBarState>();
+  late final List<Widget> _pages;
+
+  @override
+  void initState() {
+    super.initState();
+    _pages = [
+      const ChatListScreen(),
+      const EventsListScreen(),
+      HomeScreen(onOpenPremium: () => _goTo(4)),
+      const ProfileScreen(),
+      const PremiumScreen(),
+    ];
+    // Keep distances accurate; silently ignored if permission is denied.
+    UserRepository.instance.refreshLocation(AuthService.instance.uid).ignore();
+  }
+
+  void _goTo(int i) {
+    _barKey.currentState?.animateTo(i);
+    setState(() => _tab = i);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final pages = <Widget>[
-      const ChatListScreen(),
-      const EventsListScreen(),
-      HomeScreen(onOpenPremium: () => setState(() => _tab = 4)),
-      const ProfileScreen(),
-      const _Stub(title: 'Premium'),
-    ];
-
     return Scaffold(
-      body: pages[_tab],
+      // IndexedStack keeps each tab's state (e.g. the swipe deck) alive.
+      body: IndexedStack(index: _tab, children: _pages),
 
       // Fancy bottom bar with center bump & animation
       bottomNavigationBar: ConvexAppBar(
+        key: _barKey,
         style: TabStyle.reactCircle,            // animated, bouncy center
         items: const [
           TabItem(icon: Icons.chat_bubble, title: 'Chat'),
@@ -41,22 +59,10 @@ class _MainShellState extends State<MainShell> {
         initialActiveIndex: _tab,
         height: 64,
         color: Colors.black54,                    // inactive icon/text
-        activeColor: ThemeMode.system == ThemeMode.dark
-            ? Colors.tealAccent
-            : Theme.of(context).colorScheme.primary,
+        activeColor: Theme.of(context).colorScheme.primary,
         backgroundColor: Theme.of(context).colorScheme.surface,
         onTap: (i) => setState(() => _tab = i),
       ),
     );
   }
-}
-
-class _Stub extends StatelessWidget {
-  final String title;
-  const _Stub({required this.title, super.key});
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title)),
-    body: Center(child: Text('$title – coming soon…')),
-  );
 }

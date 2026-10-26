@@ -1,15 +1,10 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:multi_select_flutter/multi_select_flutter.dart';
-import 'profile_screen.dart';
-
-const allSports = [
-  "Running","Cycling","Swimming","Gym","CrossFit","Bodybuilding",
-  "Yoga","Pilates","Meditation","Boxing","MMA","Karate",
-  "Football","Basketball","Volleyball","Tennis","Badminton","Padel",
-  "Hiking","Climbing","Surfing","Dance","Calisthenics","Rowing"
-];
+import '../../../data/models/user_profile.dart';
+import '../../../data/services/user_repository.dart';
+import '../../../shared/sports.dart';
+import '../../../shared/widgets.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final UserProfile profile;
@@ -24,15 +19,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   late TextEditingController _name;
   late TextEditingController _bio;
+  late TextEditingController _age;
   late String _level;
   late List<String> _sports;
   String? _photoPath; // picked profile picture path or URL
+  bool _saving = false;
+  bool _locating = false;
 
   @override
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.profile.name);
     _bio  = TextEditingController(text: widget.profile.bio);
+    _age = TextEditingController(
+        text: widget.profile.age > 0 ? '${widget.profile.age}' : '');
     _level = widget.profile.level;
     _sports = [...widget.profile.sports];
     _photoPath = widget.profile.photoPath;
@@ -42,12 +42,51 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void dispose() {
     _name.dispose();
     _bio.dispose();
+    _age.dispose();
     super.dispose();
   }
 
   Future<void> _pickImage() async {
-    final x = await _picker.pickImage(source: ImageSource.gallery);
+    final x = await _picker.pickImage(
+        source: ImageSource.gallery, maxWidth: 1024, imageQuality: 85);
     if (x != null) setState(() => _photoPath = x.path);
+  }
+
+  Future<void> _save() async {
+    if (_name.text.trim().isEmpty) {
+      showSnack(context, 'Name cannot be empty');
+      return;
+    }
+    if (_sports.isEmpty) {
+      showSnack(context, 'Pick at least one sport');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await UserRepository.instance.update(widget.profile.copyWith(
+        name: _name.text.trim(),
+        bio: _bio.text.trim(),
+        age: int.tryParse(_age.text.trim()) ?? widget.profile.age,
+        level: _level,
+        sports: _sports,
+        photoPath: _photoPath,
+      ));
+      if (mounted) Navigator.pop(context);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _saving = false);
+        showSnack(context, 'Could not save your profile. Try again.');
+      }
+    }
+  }
+
+  Future<void> _refreshLocation() async {
+    setState(() => _locating = true);
+    await UserRepository.instance.refreshLocation(widget.profile.uid);
+    if (mounted) {
+      setState(() => _locating = false);
+      showSnack(context, 'Location updated');
+    }
   }
 
   @override
@@ -59,17 +98,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         title: const Text('Edit Profile'),
         actions: [
           TextButton(
-            onPressed: () {
-              final updated = widget.profile.copyWith(
-                name: _name.text.trim(),
-                bio: _bio.text.trim(),
-                level: _level,
-                sports: _sports,
-                photoPath: _photoPath,
-              );
-              Navigator.pop(context, updated);
-            },
-            child: const Text('Save'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Text('Save'),
           )
         ],
       ),
@@ -83,18 +116,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               child: Stack(
                 alignment: Alignment.bottomRight,
                 children: [
-                  CircleAvatar(
-                    radius: 48,
-                    backgroundImage: _photoPath == null || _photoPath!.isEmpty
-                        ? null
-                        : (_photoPath!.startsWith('http')
-                        ? NetworkImage(_photoPath!)
-                        : FileImage(File(_photoPath!)) as ImageProvider),
-                    child: (_photoPath == null || _photoPath!.isEmpty)
-                        ? const Icon(Icons.person, size: 40, color: Colors.grey)
-                        : null,
-                    backgroundColor: const Color(0xFFEDEDED),
-                  ),
+                  Avatar(url: _photoPath, radius: 48),
                   Container(
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
@@ -102,7 +124,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2),
                     ),
-                    child: const Icon(Icons.add, size: 18, color: Colors.white),
+                    child: Icon(Icons.add, size: 18, color: cs.onPrimary),
                   )
                 ],
               ),
@@ -114,19 +136,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             TextField(controller: _name, decoration: _fieldDeco('Full Name')),
             const SizedBox(height: 12),
 
+            TextField(
+              controller: _age,
+              keyboardType: TextInputType.number,
+              decoration: _fieldDeco('Age'),
+            ),
+            const SizedBox(height: 12),
+
             DropdownButtonFormField<String>(
-              value: _level,
+              initialValue: _level,
               decoration: _fieldDeco('Level'),
-              items: const [
-                DropdownMenuItem(value: 'Beginner', child: Text('Beginner')),
-                DropdownMenuItem(value: 'Intermediate', child: Text('Intermediate')),
-                DropdownMenuItem(value: 'Expert', child: Text('Expert')),
-              ],
+              items: levels
+                  .map((l) => DropdownMenuItem(value: l, child: Text(l)))
+                  .toList(),
               onChanged: (v) => setState(() => _level = v ?? _level),
             ),
             const SizedBox(height: 12),
 
-            MultiSelectDialogField(
+            MultiSelectDialogField<String>(
               items: allSports.map((s) => MultiSelectItem(s, s)).toList(),
               initialValue: _sports,
               listType: MultiSelectListType.CHIP,
@@ -136,23 +163,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 color: Colors.grey.shade200,
                 borderRadius: BorderRadius.circular(12),
               ),
-              onConfirm: (vals) => _sports = vals.cast<String>(),
+              onConfirm: (vals) => _sports = vals,
             ),
             const SizedBox(height: 12),
 
             TextField(
               controller: _bio,
               maxLines: 4,
+              maxLength: 300,
+              textCapitalization: TextCapitalization.sentences,
               decoration: _fieldDeco('About me'),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
 
-            // Location (read-only)
+            // Location (auto-detected)
             ListTile(
               leading: const Icon(Icons.location_on_outlined),
               title: const Text('Location'),
-              subtitle: Text(widget.profile.location),
-              trailing: const Text('(auto)'),
+              subtitle: Text(widget.profile.location.isEmpty
+                  ? 'Not detected yet'
+                  : widget.profile.location),
+              trailing: _locating
+                  ? const SizedBox(
+                      height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : IconButton(
+                      icon: const Icon(Icons.my_location),
+                      tooltip: 'Update location',
+                      onPressed: _refreshLocation,
+                    ),
             ),
           ],
         ),

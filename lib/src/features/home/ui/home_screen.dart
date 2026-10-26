@@ -1,46 +1,185 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:swipable_stack/swipable_stack.dart';
+import '../../../data/models/chat.dart';
+import '../../../data/models/user_profile.dart';
+import '../../../data/services/match_repository.dart';
+import '../../../shared/sports.dart';
+import '../../../shared/widgets.dart';
+import '../../chat/ui/chat_thread_screen.dart';
+import '../../profile/ui/profile_screen.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends StatelessWidget {
   final VoidCallback? onOpenPremium;
   const HomeScreen({super.key, this.onOpenPremium});
+
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  Widget build(BuildContext context) {
+    return MeBuilder(builder: (_, me) => _Deck(me: me, onOpenPremium: onOpenPremium));
+  }
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  final _controller = SwipableStackController();
+class _Deck extends StatefulWidget {
+  final UserProfile me;
+  final VoidCallback? onOpenPremium;
+  const _Deck({required this.me, this.onOpenPremium});
+  @override
+  State<_Deck> createState() => _DeckState();
+}
 
-  final _profiles = const [
-    Profile(
-      name: 'Marco',
-      age: 28,
-      distanceKm: 3,
-      imageUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e',
-      level: 'Intermediate',
-      bio: 'Early-morning gym and weekend CrossFit. Open to doubles tennis too!',
-      sports: ['Gym', 'CrossFit'],
-    ),
-    Profile(
-      name: 'Lina',
-      age: 26,
-      distanceKm: 2,
-      imageUrl: 'https://images.unsplash.com/photo-1544006659-f0b21884ce1d',
-      level: 'Beginner',
-      bio: 'New to cycling, love easy park rides and yoga cooldowns.',
-      sports: ['Yoga', 'Cycling'],
-    ),
-    Profile(
-      name: 'Ethan',
-      age: 24,
-      distanceKm: 5,
-      imageUrl: 'https://images.unsplash.com/photo-1607746882042-944635dfe10e',
-      level: 'Expert',
-      bio: 'Former college tennis, now mostly runs 10Ks. Looking for track buddy.',
-      sports: ['Tennis', 'Running'],
-    ),
-  ];
+class _DeckState extends State<_Deck> {
+  var _controller = SwipableStackController();
+  DiscoveryFilter _filter = const DiscoveryFilter();
+  List<Candidate>? _candidates;
+  String? _error;
+  int _likesToday = 0;
+
+  UserProfile get _me => widget.me;
+  bool get _outOfLikes => !_me.isPremium && _likesToday >= freeDailyLikes;
+
+  @override
+  void initState() {
+    super.initState();
+    _likesToday = _me.likesUsedOn(todayKey());
+    _controller.addListener(_onIndexChanged);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onIndexChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onIndexChanged() => setState(() {});
+
+  Future<void> _load() async {
+    setState(() {
+      _candidates = null;
+      _error = null;
+    });
+    try {
+      final list = await MatchRepository.instance.candidates(_me, _filter);
+      if (!mounted) return;
+      final old = _controller..removeListener(_onIndexChanged);
+      setState(() {
+        _controller = SwipableStackController()..addListener(_onIndexChanged);
+        _candidates = list;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not load people nearby.');
+    }
+  }
+
+  bool _canSwipe(SwipeDirection direction) {
+    if (direction == SwipeDirection.right && _outOfLikes) {
+      _showLimitDialog();
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _onSwiped(int index, SwipeDirection direction) async {
+    final other = _candidates![index].profile;
+    final liked = direction == SwipeDirection.right;
+    if (liked) {
+      HapticFeedback.mediumImpact(); // like
+      setState(() => _likesToday++);
+    } else {
+      HapticFeedback.selectionClick(); // pass
+    }
+    try {
+      final matched = await MatchRepository.instance.swipe(_me, other, liked);
+      if (matched && mounted) _showMatch(other);
+    } catch (_) {
+      if (mounted) showSnack(context, 'Could not save your choice. Check your connection.');
+    }
+  }
+
+  void _showLimitDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Out of likes for today'),
+        content: const Text(
+            'Free accounts get $freeDailyLikes likes per day. Go Premium for unlimited likes and see who already liked you.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Later')),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              widget.onOpenPremium?.call();
+            },
+            child: const Text('Go Premium'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMatch(UserProfile other) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("It's a match! 🎉", textAlign: TextAlign.center),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Avatar(url: _me.photoPath, radius: 36),
+                const SizedBox(width: 12),
+                Avatar(url: other.photoPath, radius: 36),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text('You and ${other.name} want to train together.',
+                textAlign: TextAlign.center),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Keep swiping')),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ChatThreadScreen(
+                    thread: ChatThread(
+                      id: chatIdFor(_me.uid, other.uid),
+                      otherUid: other.uid,
+                      name: other.name,
+                      avatar: other.photoPath ?? '',
+                      lastMessage: '',
+                      lastTime: DateTime.now(),
+                    ),
+                  ),
+                ),
+              );
+            },
+            child: const Text('Send a message'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openFilters() async {
+    final f = await showModalBottomSheet<DiscoveryFilter>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => _FilterSheet(initial: _filter, mySports: _me.sports),
+    );
+    if (f != null) {
+      _filter = f;
+      _load();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,74 +187,105 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Find a Partner'),
         centerTitle: true,
+        leading: IconButton(
+          icon: Badge(
+            isLabelVisible: _filter.isActive,
+            smallSize: 8,
+            child: const Icon(Icons.tune),
+          ),
+          tooltip: 'Filters',
+          onPressed: _openFilters,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.star, color: Colors.amber),
-            onPressed: widget.onOpenPremium ?? () {
-              // fallback if not provided
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const _PremiumStub()),
-              );
-            },
+            onPressed: widget.onOpenPremium,
           ),
         ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
+        child: _body(),
+      ),
+    );
+  }
+
+  Widget _body() {
+    if (_error != null) {
+      return _EmptyState(
+        icon: Icons.wifi_off,
+        text: _error!,
+        action: TextButton(onPressed: _load, child: const Text('Retry')),
+      );
+    }
+    final list = _candidates;
+    if (list == null) return const Center(child: CircularProgressIndicator());
+    if (_controller.currentIndex >= list.length) {
+      return _EmptyState(
+        icon: Icons.search_off,
+        text: list.isEmpty
+            ? 'Nobody matches these filters yet. Try widening them or check back later.'
+            : "You've seen everyone for now. Check back later!",
+        action: TextButton(onPressed: _load, child: const Text('Refresh')),
+      );
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: SwipableStack(
+            controller: _controller,
+            itemCount: list.length,
+            detectableSwipeDirections: const {
+              SwipeDirection.left,
+              SwipeDirection.right,
+            },
+            allowVerticalSwipe: false,
+            onWillMoveNext: (_, direction) => _canSwipe(direction),
+            onSwipeCompleted: _onSwiped,
+            overlayBuilder: (_, __) => const SizedBox.shrink(),
+            builder: (_, props) {
+              final c = list[props.index];
+              return GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => ProfileScreen(uid: c.profile.uid)),
+                ),
+                child: _ProfileCard(
+                  c.profile,
+                  distanceKm: c.distanceKm,
+                  swipeProgress: props.swipeProgress,
+                  direction: props.direction,
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            Expanded(
-              child: SwipableStack(
-                controller: _controller,
-                detectableSwipeDirections: const {
-                  SwipeDirection.left,
-                  SwipeDirection.right,
-                },
-                onSwipeCompleted: (index, direction) {
-                  if (direction == SwipeDirection.right) {
-                    HapticFeedback.mediumImpact();   // like
-                  } else if (direction == SwipeDirection.left) {
-                    HapticFeedback.selectionClick(); // pass
-                  }
-                },
-                overlayBuilder: (_, __) => const SizedBox.shrink(),
-                builder: (_, props) {
-                  final i = props.index % _profiles.length;
-                  final p = _profiles[i];
-                  return _ProfileCard(
-                    p,
-                    swipeProgress: props.swipeProgress,
-                    direction: props.direction,
-                  );
-                },
-              ),
+            _circleAction(
+              icon: Icons.close,
+              color: Colors.red,
+              onTap: () => _controller.next(swipeDirection: SwipeDirection.left),
             ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _circleAction(
-                  icon: Icons.close,
-                  color: Colors.red,
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    _controller.next(swipeDirection: SwipeDirection.left);
-                  },
-                ),
-                _circleAction(
-                  icon: Icons.check,
-                  color: Colors.green,
-                  onTap: () {
-                    HapticFeedback.mediumImpact();
-                    _controller.next(swipeDirection: SwipeDirection.right);
-                  },
-                ),
-              ],
+            if (!_me.isPremium)
+              Text('${(freeDailyLikes - _likesToday).clamp(0, freeDailyLikes)} likes left',
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            _circleAction(
+              icon: Icons.check,
+              color: Colors.green,
+              onTap: () {
+                if (_canSwipe(SwipeDirection.right)) {
+                  _controller.next(swipeDirection: SwipeDirection.right);
+                }
+              },
             ),
-            const SizedBox(height: 8),
           ],
         ),
-      ),
+        const SizedBox(height: 8),
+      ],
     );
   }
 
@@ -138,31 +308,127 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class Profile {
-  final String name;
-  final int age;
-  final int distanceKm;
-  final String imageUrl;
-  final String level;   // Beginner | Intermediate | Expert
-  final String bio;     // short description
-  final List<String> sports;
-  const Profile({
-    required this.name,
-    required this.age,
-    required this.distanceKm,
-    required this.imageUrl,
-    required this.level,
-    required this.bio,
-    required this.sports,
-  });
+class _EmptyState extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final Widget? action;
+  const _EmptyState({required this.icon, required this.text, this.action});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 56, color: Colors.grey),
+            const SizedBox(height: 12),
+            Text(text, textAlign: TextAlign.center),
+            if (action != null) ...[const SizedBox(height: 8), action!],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterSheet extends StatefulWidget {
+  final DiscoveryFilter initial;
+  final List<String> mySports;
+  const _FilterSheet({required this.initial, required this.mySports});
+  @override
+  State<_FilterSheet> createState() => _FilterSheetState();
+}
+
+class _FilterSheetState extends State<_FilterSheet> {
+  static const _distances = <double?>[null, 5, 10, 25, 50];
+  late String? _sport = widget.initial.sport;
+  late String? _level = widget.initial.level;
+  late double? _maxKm = widget.initial.maxKm;
+
+  @override
+  Widget build(BuildContext context) {
+    // My sports first, then the rest.
+    final sports = [
+      ...widget.mySports,
+      ...allSports.where((s) => !widget.mySports.contains(s)),
+    ];
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Sport', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String?>(
+              initialValue: _sport,
+              items: [
+                const DropdownMenuItem(value: null, child: Text('Any of my sports')),
+                ...sports.map((s) => DropdownMenuItem(value: s, child: Text(s))),
+              ],
+              onChanged: (v) => setState(() => _sport = v),
+            ),
+            const SizedBox(height: 16),
+            const Text('Level', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [null, ...levels]
+                  .map((l) => ChoiceChip(
+                        label: Text(l ?? 'Any'),
+                        selected: _level == l,
+                        onSelected: (_) => setState(() => _level = l),
+                      ))
+                  .toList(),
+            ),
+            const SizedBox(height: 16),
+            const Text('Distance', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: _distances
+                  .map((d) => ChoiceChip(
+                        label: Text(d == null ? 'Any' : '< ${d.toInt()} km'),
+                        selected: _maxKm == d,
+                        onSelected: (_) => setState(() => _maxKm = d),
+                      ))
+                  .toList(),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, const DiscoveryFilter()),
+                  child: const Text('Reset'),
+                ),
+                const Spacer(),
+                FilledButton(
+                  onPressed: () => Navigator.pop(
+                    context,
+                    DiscoveryFilter(sport: _sport, level: _level, maxKm: _maxKm),
+                  ),
+                  child: const Text('Apply'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ProfileCard extends StatelessWidget {
-  final Profile p;
+  final UserProfile p;
+  final double? distanceKm;
   final double swipeProgress;        // 0..1
   final SwipeDirection? direction;   // left/right/none
   const _ProfileCard(
       this.p, {
+        required this.distanceKm,
         required this.swipeProgress,
         required this.direction,
       });
@@ -185,6 +451,7 @@ class _ProfileCard extends StatelessWidget {
     final raw = swipeProgress;
     final safeProgress = raw.isFinite ? raw.clamp(0.0, 1.0).toDouble() : 0.0;
     final dx = sign * (25.0 * safeProgress);
+    final km = formatKm(distanceKm);
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -195,11 +462,12 @@ class _ProfileCard extends StatelessWidget {
         children: [
           Transform.translate(
             offset: Offset(dx, 0),
-            child: Image.network(
-              p.imageUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade300),
-            ),
+            child: (p.photoPath ?? '').isEmpty
+                ? Container(
+                    color: Colors.grey.shade300,
+                    child: Icon(Icons.person, size: 120, color: Colors.grey.shade500),
+                  )
+                : coverImage(p.photoPath!),
           ),
           // dark gradient for readability
           Container(
@@ -229,21 +497,22 @@ class _ProfileCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${p.name}, ${p.age}',
+                  p.age > 0 ? '${p.name}, ${p.age}' : p.name,
                   style: const TextStyle(
                       color: Colors.white, fontWeight: FontWeight.w700, fontSize: 20),
                 ),
                 const SizedBox(height: 2),
-                Text('${p.distanceKm} km away',
+                Text(km.isEmpty ? p.location : '$km away',
                     style: const TextStyle(color: Colors.white70)),
                 const SizedBox(height: 6),
                 // bio / description (2 lines)
-                Text(
-                  p.bio,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                ),
+                if (p.bio.isNotEmpty)
+                  Text(
+                    p.bio,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
@@ -259,11 +528,4 @@ class _ProfileCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _PremiumStub extends StatelessWidget {
-  const _PremiumStub();
-  @override
-  Widget build(BuildContext context) =>
-      Scaffold(appBar: AppBar(title: Text('Premium')), body: Center(child: Text('Premium page…')));
 }
