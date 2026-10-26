@@ -3,6 +3,16 @@ import '../../../data/models/user_profile.dart';
 import '../../../data/services/auth_service.dart';
 import '../../../data/services/user_repository.dart';
 import '../../../shared/widgets.dart';
+import '../../premium/ui/premium_screen.dart';
+import '../../store/data/booking.dart';
+import '../../store/data/listing.dart';
+import '../../store/data/store_repository.dart';
+import '../../store/ui/listing_detail_screen.dart';
+import '../../store/ui/my_listings_screen.dart';
+import '../../store/ui/my_rentals_screen.dart';
+import '../../store/ui/shop_screen.dart';
+import '../../store/ui/store_widgets.dart';
+import '../../store/ui/verify_screen.dart';
 import 'edit_profile_screen.dart';
 
 /// Shows the signed-in user's profile (editable) or, with [uid], someone else's.
@@ -66,10 +76,9 @@ class _ProfileView extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final p = profile;
     final km = formatKm(distanceKm);
-    final emailVerified =
-        isMe && (AuthService.instance.currentUser?.emailVerified ?? false);
     final badges = [
-      if (emailVerified && !p.badges.contains('Verified')) 'Verified',
+      if (p.verified && !p.badges.contains('Verified')) 'Verified',
+      if (p.hasApprovedShop) 'Pro shop',
       ...p.displayBadges,
     ];
 
@@ -127,6 +136,8 @@ class _ProfileView extends StatelessWidget {
                   Text(p.location, style: TextStyle(color: cs.onSurfaceVariant)),
                 Text('${p.level} · Joined ${p.joinedYear}',
                     style: TextStyle(color: cs.onSurfaceVariant)),
+                const SizedBox(height: 4),
+                RatingLabel(rating: p.rating, count: p.reviewCount, size: 14),
               ],
             ),
             const SizedBox(height: 16),
@@ -181,6 +192,7 @@ class _ProfileView extends StatelessWidget {
                   final (color, icon) = switch (b.toLowerCase()) {
                     'verified' => (Colors.blue, Icons.verified),
                     'premium' => (Colors.amber.shade700, Icons.workspace_premium),
+                    'pro shop' => (Colors.indigo, Icons.storefront),
                     _ => (Colors.green, Icons.school),
                   };
                   return Chip(
@@ -222,10 +234,151 @@ class _ProfileView extends StatelessWidget {
                   .toList(),
             ),
 
+            const SizedBox(height: 20),
+            if (isMe) ...[
+              const Text('My store', style: TextStyle(fontWeight: FontWeight.w700)),
+              _MyStoreLinks(profile: p),
+              const SizedBox(height: 12),
+            ],
+            _ListingsSection(uid: p.uid, isMe: isMe),
+            _ReviewsSection(uid: p.uid),
             const SizedBox(height: 32),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MyStoreLinks extends StatelessWidget {
+  final UserProfile profile;
+  const _MyStoreLinks({required this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = profile;
+    void open(Widget page) => Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+    final shopLabel = switch (p.shopStatus) {
+      'approved' => 'My pro shop',
+      'pending' => 'Pro shop · waiting for approval',
+      'suspended' => 'Pro shop · suspended',
+      _ => 'Open a pro shop',
+    };
+    return Column(children: [
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.sell_outlined),
+        title: const Text('My listings'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => open(const MyListingsScreen()),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.event_available_outlined),
+        title: const Text('Rentals & purchases'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => open(const MyRentalsScreen()),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(p.verified ? Icons.verified : Icons.verified_outlined, color: Colors.blue),
+        title: Text(p.verified ? 'Verified' : 'Get verified'),
+        subtitle: p.verified ? null : const Text('Required to rent out equipment'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => open(const VerifyScreen()),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.storefront_outlined),
+        title: Text(shopLabel),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => open(p.shopId != null && p.shopStatus != 'rejected'
+            ? ShopScreen(shopId: p.shopId!)
+            : const ShopApplyScreen()),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.workspace_premium, color: Colors.amber.shade700),
+        title: Text(p.isPremium ? 'Premium' : 'Go Premium'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => open(const PremiumScreen()),
+      ),
+    ]);
+  }
+}
+
+class _ListingsSection extends StatelessWidget {
+  final String uid;
+  final bool isMe;
+  const _ListingsSection({required this.uid, required this.isMe});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Listing>>(
+      stream: StoreRepository.instance.publicListingsOf(uid),
+      builder: (context, snap) {
+        final list = snap.data ?? const [];
+        if (list.isEmpty) return const SizedBox.shrink();
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(isMe ? 'My items for sale & rent' : 'Items for sale & rent',
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 230,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: list.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, i) => SizedBox(
+                width: 150,
+                child: ListingCard(
+                  listing: list[i],
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => ListingDetailScreen(listingId: list[i].id)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ]);
+      },
+    );
+  }
+}
+
+class _ReviewsSection extends StatelessWidget {
+  final String uid;
+  const _ReviewsSection({required this.uid});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Review>>(
+      stream: StoreRepository.instance.reviewsOf(uid),
+      builder: (context, snap) {
+        final list = snap.data ?? const [];
+        if (list.isEmpty) return const SizedBox.shrink();
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Reviews (${list.length})', style: const TextStyle(fontWeight: FontWeight.w700)),
+          for (final r in list.take(10))
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Avatar(url: r.authorPhoto),
+              title: Row(children: [
+                Flexible(child: Text(r.authorName, overflow: TextOverflow.ellipsis)),
+                const SizedBox(width: 8),
+                for (var i = 0; i < 5; i++)
+                  Icon(i < r.stars ? Icons.star_rounded : Icons.star_outline_rounded,
+                      size: 14, color: Colors.amber.shade700),
+              ]),
+              subtitle: Text([
+                if (r.text.isNotEmpty) r.text,
+                '${r.context == 'rental' ? 'Rental' : 'Sale'} · ${r.title}',
+              ].join('\n')),
+            ),
+        ]);
+      },
     );
   }
 }

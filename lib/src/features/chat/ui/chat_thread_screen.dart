@@ -5,6 +5,12 @@ import '../../../data/services/chat_repository.dart';
 import '../../../data/services/user_repository.dart';
 import '../../../shared/widgets.dart';
 import '../../profile/ui/profile_screen.dart';
+import '../../store/data/booking.dart';
+import '../../store/data/listing.dart';
+import '../../store/data/store_repository.dart';
+import '../../store/ui/booking_detail_screen.dart';
+import '../../store/ui/listing_detail_screen.dart';
+import '../../store/ui/store_widgets.dart';
 
 class ChatThreadScreen extends StatefulWidget {
   final ChatThread thread;
@@ -85,6 +91,8 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                     style: const TextStyle(color: Colors.red),
                   ),
                 ),
+              if (_t.isStore && _t.listingId != null)
+                _StoreHeader(thread: _t, myUid: _myUid),
               Expanded(
                 child: StreamBuilder<List<Message>>(
                   stream: _messages,
@@ -360,6 +368,68 @@ class _OptionTile extends StatelessWidget {
         tileColor: bg,
         onTap: onTap,
       ),
+    );
+  }
+}
+
+/// Store chats: the listing and the latest rental between the two members.
+class _StoreHeader extends StatefulWidget {
+  final ChatThread thread;
+  final String myUid;
+  const _StoreHeader({required this.thread, required this.myUid});
+
+  @override
+  State<_StoreHeader> createState() => _StoreHeaderState();
+}
+
+class _StoreHeaderState extends State<_StoreHeader> {
+  late final Stream<List<Booking>> _bookings =
+      StoreRepository.instance.bookingsForListing(widget.myUid, widget.thread.listingId!);
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.thread;
+    return Material(
+      color: Colors.grey.shade100,
+      child: Column(children: [
+        ListTile(
+          dense: true,
+          leading: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(width: 40, height: 40, child: coverImage(t.listingCover)),
+          ),
+          title: Text(t.listingTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: const Text('View listing'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => ListingDetailScreen(listingId: t.listingId!)),
+          ),
+        ),
+        StreamBuilder<List<Booking>>(
+          stream: _bookings,
+          builder: (context, snap) {
+            // Only bookings between these two members.
+            final list = (snap.data ?? const <Booking>[])
+                .where((b) => b.members(t.otherUid, widget.myUid))
+                .toList();
+            if (list.isEmpty) return const SizedBox.shrink();
+            final b = list.first;
+            return ListTile(
+              dense: true,
+              leading: const Icon(Icons.event_available),
+              title: Text('${b.dateLabel} · ${euros(b.price)}'),
+              subtitle: Text(b.isOwner(widget.myUid) ? 'Rental request for your item' : 'Your rental'),
+              trailing: StatusChip.booking(b.status),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => BookingDetailScreen(bookingId: b.id)),
+              ),
+            );
+          },
+        ),
+        const Divider(height: 1),
+      ]),
     );
   }
 }

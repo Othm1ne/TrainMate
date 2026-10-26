@@ -16,6 +16,11 @@ class ChatThread {
   final bool muted; // muted by me
   final bool blockedByMe;
   final bool blockedByOther;
+  // Store chats (one per listing + customer), see functions/src/store.
+  final String kind; // partner | store
+  final String? listingId;
+  final String listingTitle;
+  final String listingCover;
 
   const ChatThread({
     this.id = '',
@@ -27,7 +32,13 @@ class ChatThread {
     this.muted = false,
     this.blockedByMe = false,
     this.blockedByOther = false,
+    this.kind = 'partner',
+    this.listingId,
+    this.listingTitle = '',
+    this.listingCover = '',
   });
+
+  bool get isStore => kind == 'store';
 
   factory ChatThread.fromDoc(
       DocumentSnapshot<Map<String, dynamic>> doc, String myUid) {
@@ -38,6 +49,7 @@ class ChatThread {
         (m['memberInfo'] as Map?)?[other] ?? const {});
     final blockedBy = List<String>.from(m['blockedBy'] ?? const []);
     final t = m['lastTime'];
+    final listing = Map<String, dynamic>.from(m['listingInfo'] ?? const {});
     return ChatThread(
       id: doc.id,
       otherUid: other,
@@ -48,6 +60,10 @@ class ChatThread {
       muted: List<String>.from(m['mutedBy'] ?? const []).contains(myUid),
       blockedByMe: blockedBy.contains(myUid),
       blockedByOther: blockedBy.any((u) => u != myUid),
+      kind: m['kind'] ?? 'partner',
+      listingId: m['listingId'],
+      listingTitle: listing['title'] ?? '',
+      listingCover: listing['cover'] ?? '',
     );
   }
 }

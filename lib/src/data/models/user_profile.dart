@@ -24,6 +24,13 @@ class UserProfile {
   final List<String> blocked; // uids this user blocked
   final String likesDate; // yyyy-mm-dd of likesCount
   final int likesCount; // likes sent on likesDate
+  // Store trust fields (server-managed, see functions/src/store).
+  final bool verified; // email + phone + photo/name
+  final double? rating;
+  final int reviewCount;
+  final String? shopId;
+  final String? shopStatus; // pending | approved | rejected | suspended
+  final bool storeSuspended;
 
   const UserProfile({
     this.uid = '',
@@ -43,6 +50,12 @@ class UserProfile {
     this.blocked = const [],
     this.likesDate = '',
     this.likesCount = 0,
+    this.verified = false,
+    this.rating,
+    this.reviewCount = 0,
+    this.shopId,
+    this.shopStatus,
+    this.storeSuspended = false,
   });
 
   factory UserProfile.fromMap(String uid, Map<String, dynamic> m) {
@@ -67,8 +80,16 @@ class UserProfile {
       blocked: List<String>.from(m['blocked'] ?? const []),
       likesDate: m['likesDate'] ?? '',
       likesCount: (m['likesCount'] as num?)?.toInt() ?? 0,
+      verified: m['verified'] == true,
+      rating: (m['rating'] as num?)?.toDouble(),
+      reviewCount: (m['reviewCount'] as num?)?.toInt() ?? 0,
+      shopId: m['shopId'],
+      shopStatus: m['shopStatus'],
+      storeSuspended: m['storeSuspended'] == true,
     );
   }
+
+  bool get hasApprovedShop => shopStatus == 'approved' && shopId != null;
 
   factory UserProfile.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) =>
       UserProfile.fromMap(doc.id, doc.data() ?? const {});
@@ -119,6 +140,12 @@ class UserProfile {
       blocked: blocked,
       likesDate: likesDate,
       likesCount: likesCount,
+      verified: verified,
+      rating: rating,
+      reviewCount: reviewCount,
+      shopId: shopId,
+      shopStatus: shopStatus,
+      storeSuspended: storeSuspended,
     );
   }
 

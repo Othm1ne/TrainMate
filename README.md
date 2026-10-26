@@ -17,6 +17,10 @@ people who share your sports, match, chat, and join local sport events.
   see attendees and distance, "Going" filter, delete your own events
 - **Premium** – unlimited likes (free: 20/day) and "See who liked you"
 - **Push notifications** – new match and new message (Android/iOS)
+- **Store** – sell and rent out sports equipment: listings with photos,
+  search and filters, rental requests with an availability calendar,
+  handover/return photos, reviews, verified renters-out (email + phone SMS),
+  pro shops, boosts. Spec: `docs/specs/store-sell-and-rent.md`
 
 ## Stack
 
@@ -74,6 +78,21 @@ and match creation can't be faked from a modified client.
 - **iOS**: add the `REVERSED_CLIENT_ID` from `GoogleService-Info.plist` as a URL
   scheme in `ios/Runner/Info.plist`.
 
+## Store administration (Firebase console → Firestore)
+
+There is no admin app yet; these are done by editing documents:
+
+| Task | How |
+|---|---|
+| Approve a pro shop | `shops/{id}` → set `status` to `approved` (or `rejected` / `suspended`). Owner and listings update automatically and the owner gets a push |
+| Review a held listing | `listings/{id}` with `status == pending_review` → set `status` to `active` or `removed` (`moderationFlags` says why it was held) |
+| Handle a dispute | `bookings/{id}` with `status == disputed` → contact both users, then set `status` to `resolved` |
+| Suspend someone from the store | `users/{uid}` → `storeSuspended: true` |
+| Reports | `reports` collection (`type`: listing / booking / user) |
+
+Phone verification needs **Authentication → Sign-in method → Phone** enabled
+(add test numbers there for development).
+
 ## Data model (Firestore)
 
 | Path | Content |
@@ -85,6 +104,9 @@ and match creation can't be faked from a modified client.
 | `chats/{id}/messages/{id}` | `{senderId, text, sentAt}` |
 | `events/{id}` | event details, `creatorId`, `attendeeIds[]`, `attendeePhotos{}` |
 | `reports/{id}` | user reports for moderation |
+| `listings/{id}` (+ `blocked/{day}`) | store listings; booked days per listing |
+| `bookings/{id}` | rentals and their status history |
+| `sales/{id}`, `reviews/{id}`, `shops/{id}` | sales, two-sided reviews, pro shops |
 
 ## Known limitations
 

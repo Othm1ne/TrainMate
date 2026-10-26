@@ -11,15 +11,21 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      // Server-managed: premium (activatePremium) and like counters (swipe).
+      // Server-managed: premium (activatePremium), like counters (swipe),
+      // store trust fields (verification, ratings, shops, boosts).
       // Badges are granted by admins only.
-      function serverFields() { return ['isPremium', 'likesDate', 'likesCount', 'badges', 'createdAt']; }
+      function serverFields() {
+        return ['isPremium', 'likesDate', 'likesCount', 'badges', 'createdAt',
+                'verified', 'phoneVerified', 'rating', 'ratingSum', 'reviewCount',
+                'storeSuspended', 'freeBoostsUsed', 'boostMonth', 'shopId', 'shopStatus',
+                'lateCancels'];
+      }
 
       allow read: if signedIn();
       allow create: if isMe(uid)
         && request.resource.data.get('isPremium', false) == false
         && request.resource.data.get('badges', []).size() == 0
-        && !('likesCount' in request.resource.data);
+        && !request.resource.data.keys().hasAny(serverFields().removeAll(['isPremium', 'badges', 'createdAt']));
       allow update: if isMe(uid) && !changed().hasAny(serverFields());
       allow delete: if isMe(uid);
 
@@ -46,7 +52,8 @@ service cloud.firestore {
       function member() { return signedIn() && request.auth.uid in resource.data.members; }
 
       allow read: if member();
-      // Chats are created by the `swipe` function on a mutual like.
+      // Chats are created by Cloud Functions: `swipe` (mutual like) and
+      // `contactOwner` / `requestRental` (store chats, kind == 'store').
       allow create, delete: if false;
       // Members may update the preview, their own mute/block entry and their
       // own name/photo copy — never the member list or the other person's flags.
@@ -83,6 +90,48 @@ service cloud.firestore {
         )
       );
       allow delete: if signedIn() && resource.data.creatorId == request.auth.uid;
+    }
+
+    // ---- Store (docs/specs/store-sell-and-rent.md) ----
+    // Every store write goes through Cloud Functions; clients only read.
+
+    match /listings/{listingId} {
+      allow read: if signedIn() && (
+        resource.data.status in ['active', 'reserved', 'sold'] ||
+        resource.data.ownerId == request.auth.uid);
+      allow write: if false;
+
+      // Booked days (doc id = yyyy-mm-dd) for the availability calendar.
+      match /blocked/{day} {
+        allow read: if signedIn();
+        allow write: if false;
+      }
+      match /views/{uid} {
+        allow read, write: if false;
+      }
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow write: if false;
+    }
+
+    match /sales/{saleId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow write: if false;
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if signedIn() &&
+        (resource.data.visible == true || resource.data.authorUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Admins approve shops by editing `status` in the Firebase console.
+    match /shops/{shopId} {
+      allow read: if signedIn() &&
+        (resource.data.status == 'approved' || resource.data.ownerUid == request.auth.uid);
+      allow write: if false;
     }
 
     match /reports/{reportId} {

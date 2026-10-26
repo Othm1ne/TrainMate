@@ -354,3 +354,19 @@ All status changes happen **only** in functions; security rules make
 Setup needed from Othmane before building: enable **Phone** sign-in in Firebase
 Authentication (SMS costs apply beyond the free tier) and add test phone numbers
 for development.
+
+## 18. Implementation notes (V1 as built)
+Small changes from the plan above, decided while building:
+- **Listing writes go through a callable (`saveListing`)** instead of an
+  `onListingWrite` trigger: the server validates, moderates and sets
+  `status`/`ownerInfo` in one place, and clients cannot write listings at all.
+- **`returned` and `completed` are one step**: "Returned OK" completes the
+  rental directly. An early return frees the remaining booked days.
+- **New listing status `expired`** (after 60 days); "Put back online" renews it.
+- **No geohash yet**: the feed loads the 300 newest active listings and filters
+  distance on the device. Fine for the Paris launch; switch to geohash queries
+  when the catalogue grows.
+- **Availability** is read through `listingAvailability`, and the date picker
+  greys out booked days and stops a range from crossing one.
+- Store chats and rental requests post a preview line in the chat; the chat
+  shows the listing and the latest booking at the top.

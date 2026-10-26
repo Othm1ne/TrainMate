@@ -11,6 +11,20 @@ service firebase.storage {
       allow write: if request.auth != null && request.auth.uid == uid && isImage();
     }
 
+    // Store listing photos: written by the owner before calling saveListing.
+    match /listings/{uid}/{listingId}/{file} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid && isImage();
+    }
+
+    // Rental handover/return photos. Only the uploader accesses them through the
+    // SDK; the other member sees them via the download URL stored on the booking
+    // (which only booking members can read).
+    match /bookings/{uid}/{bookingId}/{file} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null && request.auth.uid == uid && isImage();
+    }
+
     // Event covers live under the creator's uid, so only they can replace them.
     match /events/{uid}/{eventId}/{file} {
       allow read: if request.auth != null;

@@ -14,6 +14,7 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   final _search = TextEditingController();
+  String _kind = 'all'; // all | partner | store
   late final Stream<List<ChatThread>> _threads =
       ChatRepository.instance.threads(AuthService.instance.uid);
 
@@ -52,7 +53,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Row(children: [
+              for (final (k, label) in [('all', 'All'), ('partner', 'Partners'), ('store', 'Store')])
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(label),
+                    selected: _kind == k,
+                    onSelected: (_) => setState(() => _kind = k),
+                  ),
+                ),
+            ]),
+          ),
           Expanded(
             child: StreamBuilder<List<ChatThread>>(
               stream: _threads,
@@ -65,8 +79,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 }
                 final q = _search.text.trim().toLowerCase();
                 final filtered = snap.data!.where((t) {
+                  if (_kind != 'all' && t.kind != _kind) return false;
                   if (q.isEmpty) return true;
                   return t.name.toLowerCase().contains(q) ||
+                      t.listingTitle.toLowerCase().contains(q) ||
                       t.lastMessage.toLowerCase().contains(q);
                 }).toList();
 
@@ -75,9 +91,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     child: Padding(
                       padding: const EdgeInsets.all(24),
                       child: Text(
-                        q.isEmpty
-                            ? 'No conversations yet.\nMatch with someone on Home to start chatting!'
-                            : 'No chats match "$q".',
+                        q.isNotEmpty
+                            ? 'No chats match "$q".'
+                            : _kind == 'store'
+                                ? 'No store conversations yet.\nContact a seller from the Store tab.'
+                                : 'No conversations yet.\nMatch with someone on Home to start chatting!',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -90,7 +108,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   itemBuilder: (context, i) {
                     final t = filtered[i];
                     return ListTile(
-                      leading: Avatar(url: t.avatar),
+                      leading: t.isStore
+                          ? Stack(clipBehavior: Clip.none, children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: SizedBox(width: 40, height: 40, child: coverImage(t.listingCover)),
+                              ),
+                              Positioned(right: -6, bottom: -6, child: Avatar(url: t.avatar, radius: 11)),
+                            ])
+                          : Avatar(url: t.avatar),
                       title: Row(
                         children: [
                           Flexible(
@@ -106,7 +132,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         ],
                       ),
                       subtitle: Text(
-                        t.lastMessage,
+                        t.isStore ? '🛒 ${t.listingTitle} · ${t.lastMessage}' : t.lastMessage,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
