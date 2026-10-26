@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/user_profile.dart';
 import 'location_service.dart';
+import 'match_repository.dart' show functions;
 import 'storage_service.dart';
 
 class UserRepository {
@@ -67,13 +68,11 @@ class UserRepository {
     });
   }
 
-  Future<void> setBadge(String uid, String badge) =>
-      users.doc(uid).update({'badges': FieldValue.arrayUnion([badge])});
-
-  // Payments are not integrated yet: this flips the flag directly.
-  // Replace with an in-app purchase / Stripe webhook before release.
-  Future<void> setPremium(String uid, bool value) =>
-      users.doc(uid).update({'isPremium': value});
+  /// isPremium can only be set by the server (see firestore.rules).
+  /// Payments are not integrated yet: the function grants it directly —
+  /// add receipt verification in functions/src/matching.ts before release.
+  Future<void> activatePremium() =>
+      functions.httpsCallable('activatePremium').call<void>();
 
   Future<void> block(String uid, String other) =>
       users.doc(uid).update({'blocked': FieldValue.arrayUnion([other])});

@@ -93,6 +93,11 @@ class _DeckState extends State<_Deck> {
     try {
       final matched = await MatchRepository.instance.swipe(_me, other, liked);
       if (matched && mounted) _showMatch(other);
+    } on LikeLimitReached {
+      // Server is the source of truth (e.g. likes used on another device).
+      if (!mounted) return;
+      setState(() => _likesToday = freeDailyLikes);
+      _showLimitDialog();
     } catch (_) {
       if (mounted) showSnack(context, 'Could not save your choice. Check your connection.');
     }

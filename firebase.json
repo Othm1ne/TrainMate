@@ -1,1 +1,46 @@
-{"firestore":{"rules":"firestore.rules","indexes":"firestore.indexes.json"},"storage":{"rules":"storage.rules"},"flutter":{"platforms":{"android":{"default":{"projectId":"train-mate-7mmmc2","appId":"1:271386691069:android:05317b0c6a9de7e736c594","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"train-mate-7mmmc2","configurations":{"android":"1:271386691069:android:05317b0c6a9de7e736c594","ios":"1:271386691069:ios:4e17f3a8a73258bc36c594","web":"1:271386691069:web:f183a234ec0d071536c594"}}}}}}
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    }
+  ],
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "train-mate-7mmmc2",
+          "appId": "1:271386691069:android:05317b0c6a9de7e736c594",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "train-mate-7mmmc2",
+          "configurations": {
+            "android": "1:271386691069:android:05317b0c6a9de7e736c594",
+            "ios": "1:271386691069:ios:4e17f3a8a73258bc36c594",
+            "web": "1:271386691069:web:f183a234ec0d071536c594"
+          }
+        }
+      }
+    }
+  }
+}

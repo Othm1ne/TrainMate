@@ -74,10 +74,10 @@ class UserProfile {
       UserProfile.fromMap(doc.id, doc.data() ?? const {});
 
   /// Fields the user edits themselves. Server-managed fields (createdAt,
-  /// likes counters, premium, blocked) are written by the repository.
+  /// likes counters, premium, blocked) are written elsewhere. The email is
+  /// deliberately not stored: profiles are readable by every user.
   Map<String, dynamic> toMap() => {
         'name': name,
-        'email': email,
         'age': age,
         'location': location,
         'lat': lat,
@@ -169,7 +169,8 @@ double? distanceKm(double? lat1, double? lng1, double? lat2, double? lng2) {
   return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
 }
 
+/// yyyy-mm-dd in UTC, matching the server's daily like counter.
 String todayKey([DateTime? now]) {
-  final d = now ?? DateTime.now();
+  final d = (now ?? DateTime.now()).toUtc();
   return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }

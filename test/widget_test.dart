@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:trainmate/src/data/models/chat.dart';
 import 'package:trainmate/src/data/models/user_profile.dart';
+import 'package:trainmate/src/data/services/match_repository.dart';
 import 'package:trainmate/src/features/onboarding/ui/onboarding_screen.dart';
 
 void main() {
@@ -56,13 +57,34 @@ void main() {
     expect(distanceKm(null, 2, 3, 4), isNull);
   });
 
+  test('matchScore prefers shared sports, nearby and similar level', () {
+    UserProfile u(String level, List<String> sports) => UserProfile(
+          uid: level,
+          name: level,
+          location: '',
+          joinedYear: 2026,
+          level: level,
+          bio: '',
+          sports: sports,
+          badges: const [],
+        );
+    final me = u('Intermediate', ['Running', 'Tennis', 'Gym']);
+    final perfect = matchScore(me, u('Intermediate', ['Running', 'Tennis', 'Gym']), 0);
+    expect(perfect, closeTo(1.0, 1e-9));
+    final far = matchScore(me, u('Intermediate', ['Running']), 30);
+    final near = matchScore(me, u('Intermediate', ['Running']), 2);
+    expect(near, greaterThan(far));
+    expect(matchScore(me, u('Expert', ['Running']), 2),
+        lessThan(matchScore(me, u('Intermediate', ['Running']), 2)));
+  });
+
   test('chatIdFor is order independent', () {
     expect(chatIdFor('b', 'a'), chatIdFor('a', 'b'));
     expect(chatIdFor('a', 'b'), 'a_b');
   });
 
-  test('todayKey pads month and day', () {
-    expect(todayKey(DateTime(2026, 3, 7)), '2026-03-07');
+  test('todayKey is UTC and pads month and day', () {
+    expect(todayKey(DateTime.utc(2026, 3, 7, 23, 30)), '2026-03-07');
   });
 
   testWidgets('Onboarding shows sign-up and log-in buttons', (tester) async {

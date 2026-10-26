@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'push_service.dart';
 
 class AuthService {
   AuthService._();
@@ -46,6 +47,7 @@ class AuthService {
   }
 
   Future<void> signOut() async {
+    await PushService.instance.unregister();
     if (!kIsWeb) await GoogleSignIn().signOut().catchError((_) => null);
     await _auth.signOut();
   }

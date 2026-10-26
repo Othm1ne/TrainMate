@@ -3,20 +3,36 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    // list field `f` differs from before only by adding/removing the caller.
+    function onlySelfToggled(f) {
+      return request.resource.data.get(f, []).removeAll([request.auth.uid])
+          == resource.data.get(f, []).removeAll([request.auth.uid]);
+    }
 
     match /users/{uid} {
+      // Server-managed: premium (activatePremium) and like counters (swipe).
+      // Badges are granted by admins only.
+      function serverFields() { return ['isPremium', 'likesDate', 'likesCount', 'badges', 'createdAt']; }
+
       allow read: if signedIn();
-      allow create: if isMe(uid);
-      // NOTE: isPremium is client-writable until real payments are added.
-      // Then move it to a Cloud Function and block it here.
-      allow update: if isMe(uid);
+      allow create: if isMe(uid)
+        && request.resource.data.get('isPremium', false) == false
+        && request.resource.data.get('badges', []).size() == 0
+        && !('likesCount' in request.resource.data);
+      allow update: if isMe(uid) && !changed().hasAny(serverFields());
       allow delete: if isMe(uid);
 
-      // Swipes live under the swiper. The swiped person may read the one
-      // about them (that's how a match is detected).
+      // Swipes are written by the `swipe` Cloud Function only. The swiped
+      // person may read the one about them.
       match /swipes/{otherUid} {
         allow read: if isMe(uid) || isMe(otherUid);
-        allow write: if isMe(uid);
+        allow write: if false;
+      }
+
+      // FCM tokens for push notifications.
+      match /devices/{token} {
+        allow read, write: if isMe(uid);
       }
     }
 
@@ -28,34 +44,43 @@ service cloud.firestore {
 
     match /chats/{chatId} {
       function member() { return signedIn() && request.auth.uid in resource.data.members; }
-      function notBlocked() { return get(/databases/$(database)/documents/chats/$(chatId)).data.blockedBy.size() == 0; }
 
       allow read: if member();
-      allow create: if signedIn() && request.auth.uid in request.resource.data.members;
-      allow update: if member();
+      // Chats are created by the `swipe` function on a mutual like.
+      allow create, delete: if false;
+      // Members may update the preview, their own mute/block entry and their
+      // own name/photo copy — never the member list or the other person's flags.
+      allow update: if member()
+        && changed().hasOnly(['lastMessage', 'lastTime', 'mutedBy', 'blockedBy', 'memberInfo'])
+        && onlySelfToggled('mutedBy')
+        && onlySelfToggled('blockedBy')
+        && request.resource.data.memberInfo.diff(resource.data.memberInfo)
+             .affectedKeys().hasOnly([request.auth.uid]);
 
       match /messages/{messageId} {
-        function chatMember() {
-          return signedIn() &&
-            request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members;
-        }
-        allow read: if chatMember();
-        allow create: if chatMember() && notBlocked() &&
-          request.resource.data.senderId == request.auth.uid &&
-          request.resource.data.text is string &&
-          request.resource.data.text.size() > 0 &&
-          request.resource.data.text.size() <= 2000;
+        function chat() { return get(/databases/$(database)/documents/chats/$(chatId)).data; }
+        allow read: if signedIn() && request.auth.uid in chat().members;
+        allow create: if signedIn() && request.auth.uid in chat().members
+          && chat().blockedBy.size() == 0
+          && request.resource.data.keys().hasOnly(['senderId', 'text', 'sentAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000;
       }
     }
 
     match /events/{eventId} {
       allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.creatorId == request.auth.uid;
-      // Creator edits anything; others may only change attendance.
+      // Creator edits anything; others may only add/remove themselves.
       allow update: if signedIn() && (
-        resource.data.creatorId == request.auth.uid ||
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['attendeeIds', 'attendeePhotos'])
+        resource.data.creatorId == request.auth.uid || (
+          changed().hasOnly(['attendeeIds', 'attendeePhotos'])
+          && onlySelfToggled('attendeeIds')
+          && request.resource.data.attendeePhotos.diff(resource.data.attendeePhotos)
+               .affectedKeys().hasOnly([request.auth.uid])
+        )
       );
       allow delete: if signedIn() && resource.data.creatorId == request.auth.uid;
     }

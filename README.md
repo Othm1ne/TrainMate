@@ -16,10 +16,11 @@ people who share your sports, match, chat, and join local sport events.
 - **Events** – create events (cover photo, category, place, date), join/leave,
   see attendees and distance, "Going" filter, delete your own events
 - **Premium** – unlimited likes (free: 20/day) and "See who liked you"
+- **Push notifications** – new match and new message (Android/iOS)
 
 ## Stack
 
-Flutter · Firebase Auth · Cloud Firestore · Firebase Storage · geolocator/geocoding
+Flutter · Firebase Auth · Cloud Firestore · Firebase Storage · Cloud Functions (TypeScript) · FCM · geolocator/geocoding
 
 ```
 lib/
@@ -32,7 +33,14 @@ lib/
     features/               one folder per screen group (auth, home, chat, events, profile, premium)
     shell/main_shell.dart   bottom navigation
     shared/                 sports list, shared widgets
+functions/src/
+  matching.ts               swipe (likes, daily limit, match → chat), activatePremium
+  chat.ts                   push notification on new message
+  notify.ts                 FCM helper (cleans up dead tokens)
 ```
+
+Likes, matches and Premium go through Cloud Functions so the daily limit
+and match creation can't be faked from a modified client.
 
 ## Setup
 
@@ -47,10 +55,11 @@ lib/
    dart pub global activate flutterfire_cli
    flutterfire configure
    ```
-4. Deploy the security rules and indexes:
+4. Deploy the backend (Cloud Functions need the Blaze plan):
    ```bash
    firebase use <your-project-id>
-   firebase deploy --only firestore:rules,firestore:indexes,storage
+   cd functions && npm install && cd ..
+   firebase deploy --only firestore,storage,functions
    ```
 5. Run:
    ```bash
@@ -70,7 +79,8 @@ lib/
 | Path | Content |
 |---|---|
 | `users/{uid}` | profile, `lat`/`lng`, `blocked[]`, `isPremium`, daily like counter |
-| `users/{uid}/swipes/{otherUid}` | `{from, to, liked, at}` |
+| `users/{uid}/swipes/{otherUid}` | `{from, to, liked, at}` (written by the `swipe` function) |
+| `users/{uid}/devices/{token}` | FCM tokens for push notifications |
 | `chats/{uidA_uidB}` | `members`, `memberInfo`, `lastMessage`, `mutedBy`, `blockedBy` |
 | `chats/{id}/messages/{id}` | `{senderId, text, sentAt}` |
 | `events/{id}` | event details, `creatorId`, `attendeeIds[]`, `attendeePhotos{}` |
@@ -78,14 +88,19 @@ lib/
 
 ## Known limitations
 
-- Premium has no payment provider yet: "Upgrade now" sets `isPremium` directly.
-  Before release, connect in-app purchases / Stripe and set the flag from a
-  Cloud Function (then lock `isPremium` in `firestore.rules`).
-- No push notifications yet (Firebase Cloud Messaging would be the next step).
+- Premium has no payment provider yet: the `activatePremium` function grants
+  it to anyone who asks. Add App Store / Play / Stripe receipt verification
+  there before release.
+- Push notifications are not set up on web (needs a VAPID key + service
+  worker). On iOS, upload an APNs key in Firebase → Project settings → Cloud
+  Messaging and enable the Push Notifications capability in Xcode.
+- Locations are stored rounded to ~1 km because profiles are readable by all
+  signed-in users.
 
 ## Tests
 
 ```bash
 flutter analyze
 flutter test
+cd functions && npm run build
 ```

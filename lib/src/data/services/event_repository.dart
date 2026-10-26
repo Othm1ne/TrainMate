@@ -30,7 +30,7 @@ class EventRepository {
   Future<EventItem> create(EventItem draft, UserProfile creator) async {
     final doc = _events.doc();
     final coverUrl = await StorageService.instance
-        .upload(draft.cover, 'events/${doc.id}/cover.jpg');
+        .upload(draft.cover, 'events/${creator.uid}/${doc.id}/cover.jpg');
     final coords = await LocationService.instance.geocode(draft.place);
     final item = EventItem(
       id: doc.id,

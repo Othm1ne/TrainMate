@@ -1,11 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
-import '../models/chat.dart';
 import '../models/user_profile.dart';
 import 'user_repository.dart';
 
 /// Free accounts get this many likes per day; Premium is unlimited.
+/// Enforced server-side in functions/src/bootstrap.ts (FREE_DAILY_LIKES).
 const freeDailyLikes = 20;
+
+/// Region of the Cloud Functions (functions/src/bootstrap.ts).
+final functions = FirebaseFunctions.instanceFor(region: 'europe-west1');
 
 class DiscoveryFilter {
   final String? sport; // null = any of my sports
@@ -20,7 +24,24 @@ class DiscoveryFilter {
 class Candidate {
   final UserProfile profile;
   final double? distanceKm;
-  const Candidate(this.profile, this.distanceKm);
+  final double score;
+  const Candidate(this.profile, this.distanceKm, [this.score = 0]);
+}
+
+/// Thrown when a free user is out of likes for today.
+class LikeLimitReached implements Exception {}
+
+/// Match quality, higher is better: 60% shared sports, 30% distance
+/// (0 at 25 km and beyond), 10% level gap.
+double matchScore(UserProfile me, UserProfile other, double? distanceKm) {
+  final overlap = other.sports.where(me.sports.contains).length;
+  final overlapScore = (overlap / 3).clamp(0.0, 1.0);
+  final distanceScore =
+      distanceKm == null ? 0.0 : ((25 - distanceKm) / 25).clamp(0.0, 1.0);
+  final levelGap =
+      (levels.indexOf(me.level) - levels.indexOf(other.level)).abs().clamp(0, 2);
+  final levelScore = 1 - levelGap / 2;
+  return overlapScore * 0.6 + distanceScore * 0.3 + levelScore * 0.1;
 }
 
 class MatchRepository {
@@ -32,7 +53,7 @@ class MatchRepository {
       _db.collection('users').doc(uid).collection('swipes');
 
   /// People to show on the Home deck: share a sport, not swiped yet,
-  /// not blocked either way, sorted by distance.
+  /// not blocked either way, best matches first.
   Future<List<Candidate>> candidates(UserProfile me, DiscoveryFilter f) async {
     final sports = f.sport != null ? [f.sport!] : me.sports.take(10).toList();
     Query<Map<String, dynamic>> q = UserRepository.instance.users;
@@ -49,44 +70,24 @@ class MatchRepository {
       if (me.blocked.contains(p.uid) || p.blocked.contains(me.uid)) continue;
       final d = me.distanceKmTo(p.lat, p.lng);
       if (f.maxKm != null && (d == null || d > f.maxKm!)) continue;
-      list.add(Candidate(p, d));
+      list.add(Candidate(p, d, matchScore(me, p, d)));
     }
-    list.sort((a, b) =>
-        (a.distanceKm ?? double.infinity).compareTo(b.distanceKm ?? double.infinity));
+    list.sort((a, b) => b.score.compareTo(a.score));
     return list;
   }
 
-  /// Records a swipe. Returns true when it created a match.
+  /// Records a swipe on the server. Returns true when it created a match.
+  /// Throws [LikeLimitReached] when a free user is out of likes.
   Future<bool> swipe(UserProfile me, UserProfile other, bool liked) async {
-    await _swipes(me.uid).doc(other.uid).set({
-      'from': me.uid,
-      'to': other.uid,
-      'liked': liked,
-      'at': FieldValue.serverTimestamp(),
-    });
-    if (!liked) return false;
-
-    final today = todayKey();
-    await UserRepository.instance.users.doc(me.uid).update({
-      'likesDate': today,
-      'likesCount': me.likesUsedOn(today) + 1,
-    });
-
-    final back = await _swipes(other.uid).doc(me.uid).get();
-    if (!(back.data()?['liked'] ?? false)) return false;
-
-    await _db.collection('chats').doc(chatIdFor(me.uid, other.uid)).set({
-      'members': [me.uid, other.uid],
-      'memberInfo': {
-        me.uid: {'name': me.name, 'photoUrl': me.photoPath ?? ''},
-        other.uid: {'name': other.name, 'photoUrl': other.photoPath ?? ''},
-      },
-      'lastMessage': 'You matched! Say hi 👋',
-      'lastTime': FieldValue.serverTimestamp(),
-      'mutedBy': <String>[],
-      'blockedBy': <String>[],
-    }, SetOptions(merge: true));
-    return true;
+    try {
+      final res = await functions
+          .httpsCallable('swipe')
+          .call<Map<String, dynamic>>({'toUid': other.uid, 'liked': liked});
+      return res.data['matched'] == true;
+    } on FirebaseFunctionsException catch (e) {
+      if (e.code == 'resource-exhausted') throw LikeLimitReached();
+      rethrow;
+    }
   }
 
   /// People who liked me and I haven't swiped on yet (Premium feature).

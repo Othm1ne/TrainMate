@@ -40,7 +40,7 @@ class _UpsellState extends State<_Upsell> {
   Future<void> _upgrade() async {
     setState(() => _busy = true);
     try {
-      await UserRepository.instance.setPremium(widget.me.uid, true);
+      await UserRepository.instance.activatePremium();
       if (mounted) showSnack(context, 'Welcome to TrainMate Premium! ⭐');
     } catch (_) {
       if (mounted) showSnack(context, 'Upgrade failed. Try again.');

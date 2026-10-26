@@ -1,4 +1,8 @@
+import 'dart:async';
+
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import '../data/services/push_service.dart';
 import '../data/services/auth_service.dart';
 import '../data/services/user_repository.dart';
 import '../features/home/ui/home_screen.dart';
@@ -19,6 +23,7 @@ class _MainShellState extends State<MainShell> {
   int _tab = 2;
   final _barKey = GlobalKey<ConvexAppBarState>();
   late final List<Widget> _pages;
+  StreamSubscription<RemoteMessage>? _pushSub;
 
   @override
   void initState() {
@@ -32,6 +37,21 @@ class _MainShellState extends State<MainShell> {
     ];
     // Keep distances accurate; silently ignored if permission is denied.
     UserRepository.instance.refreshLocation(AuthService.instance.uid).ignore();
+    PushService.instance.register(AuthService.instance.uid);
+    // The OS doesn't show notifications while the app is open: use a snackbar.
+    _pushSub = PushService.instance.onForegroundMessage.listen((m) {
+      final n = m.notification;
+      if (n == null || !mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text([n.title, n.body].whereType<String>().join(': '))),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _pushSub?.cancel();
+    super.dispose();
   }
 
   void _goTo(int i) {

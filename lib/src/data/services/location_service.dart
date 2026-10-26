@@ -28,13 +28,17 @@ class LocationService {
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.low),
       );
-      return LocationResult(
-          pos.latitude, pos.longitude, await _label(pos.latitude, pos.longitude));
+      // Profiles are public, so only store ~1 km precision, never exact GPS.
+      final lat = _coarse(pos.latitude);
+      final lng = _coarse(pos.longitude);
+      return LocationResult(lat, lng, await _label(lat, lng));
     } catch (e) {
       debugPrint('Location unavailable: $e');
       return null;
     }
   }
+
+  double _coarse(double v) => (v * 100).roundToDouble() / 100;
 
   Future<String> _label(double lat, double lng) async {
     if (kIsWeb) return '';
